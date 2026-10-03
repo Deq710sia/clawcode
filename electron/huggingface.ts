@@ -140,6 +140,10 @@ export async function downloadModel(
   modelId: string,
   onProgress?: (p: DownloadProgress) => void
 ): Promise<{ ok: boolean; error?: string; path?: string }> {
+  // Must look like "owner/name": blocks option-like ids (e.g. "--token=...") and path tricks.
+  if (typeof modelId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(modelId)) {
+    return { ok: false, error: 'Invalid model id. Expected "owner/name".' };
+  }
   const safeName = modelId.replace(/[^a-zA-Z0-9_-]/g, '_');
   const target = join(modelsDir(), safeName);
   if (existsSync(target)) {
@@ -294,6 +298,10 @@ function listFilesDeep(dir: string, prefix: string = ''): string[] {
 }
 
 export async function deleteDownloadedModel(name: string): Promise<{ ok: boolean; error?: string }> {
+  // `name` comes from the renderer and feeds a recursive delete: accept only a plain folder name.
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}$/.test(name) || name.includes('..')) {
+    return { ok: false, error: 'Invalid model name' };
+  }
   const target = join(modelsDir(), name);
   if (!existsSync(target)) return { ok: false, error: 'Not found' };
   try {
