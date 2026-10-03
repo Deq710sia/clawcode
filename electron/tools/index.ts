@@ -17,6 +17,7 @@ import {
   statSync,
   unlinkSync,
   renameSync,
+  realpathSync,
 } from 'node:fs';
 import { join, resolve as pathResolve, relative, isAbsolute, normalize, dirname, sep } from 'node:path';
 
@@ -38,9 +39,28 @@ function safePath(ctx: ToolContext, p: string): string {
   if (!p || typeof p !== 'string') throw new Error('Path argument required');
   const candidate = isAbsolute(p) ? p : join(ctx.workspace, p);
   const resolved = pathResolve(candidate);
-  const rel = relative(ctx.workspace, resolved);
-  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) {
+  const inside = (root: string, target: string) => {
+    const rel = relative(root, target);
+    return !(rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel));
+  };
+  if (!inside(ctx.workspace, resolved)) {
     throw new Error(`Path escapes workspace: ${p}`);
+  }
+  // Symlinks: resolve the nearest existing ancestor and make sure it is still inside the real workspace.
+  try {
+    const realRoot = realpathSync(ctx.workspace);
+    let probe = resolved;
+    while (!existsSync(probe)) {
+      const parent = dirname(probe);
+      if (parent === probe) break;
+      probe = parent;
+    }
+    if (!inside(realRoot, realpathSync(probe))) {
+      throw new Error(`Path escapes workspace via symlink: ${p}`);
+    }
+  } catch (err: any) {
+    if (String(err?.message).startsWith('Path escapes')) throw err;
+    // realpath failures (permissions, races) fall through to the lexical check above
   }
   return resolved;
 }
