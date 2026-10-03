@@ -2979,3 +2979,6 @@ textarea {
 .thinking-toggle:hover { color: var(--fg-1); }
 .thinking-toggle .rot90 { transform: rotate(90deg); }
 .thinking-body { margin-top: 4px; padding: 6px 10px; border-left: 2px solid var(--border-2); color: var(--fg-2); font-size: 12px; white-space: pre-wrap; max-height: 240px; overflow-y: auto; }
+
+/* Steering queue */
+.composer-queue { margin: 0 auto 6px; max-width: 860px; padding: 4px 10px; font-size: 11px; color: var(--fg-2); border-left: 2px solid var(--accent-bright); background: var(--bg-2); border-radius: 0 6px 6px 0; }

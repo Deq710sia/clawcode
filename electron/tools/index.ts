@@ -117,14 +117,20 @@ const listFiles: ToolDef = {
 // ---------------------------------------------------------------------------
 // Tool: read_file
 // ---------------------------------------------------------------------------
+const READ_MAX_LINES = 2000;
+const READ_MAX_CHARS = 60_000;
+
 const readFile: ToolDef = {
   name: 'read_file',
   description:
-    'Read the full contents of a UTF-8 text file. Returns { path, content }. Rejects paths outside the workspace.',
+    'Read a UTF-8 text file. Large files are returned in chunks: use offset (1-based line) and limit (lines) to continue. ' +
+    'Returns { path, content, totalLines, startLine, endLine, truncated, nextOffset }.',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string', description: 'File path relative to workspace root.' },
+      offset: { type: 'integer', description: 'First line to read (1-based). Default 1.' },
+      limit: { type: 'integer', description: `Max lines to return. Default ${READ_MAX_LINES}.` },
     },
     required: ['path'],
   },
@@ -133,9 +139,39 @@ const readFile: ToolDef = {
     if (!existsSync(full)) throw new Error(`File not found: ${args.path}`);
     const st = statSync(full);
     if (st.isDirectory()) throw new Error(`Path is a directory: ${args.path}`);
-    if (st.size > 5 * 1024 * 1024) throw new Error(`File too large (${st.size} bytes > 5MB)`);
-    const content = readFileSync(full, 'utf8');
-    return { path: args.path, content, size: st.size };
+    if (st.size > 20 * 1024 * 1024) throw new Error(`File too large (${st.size} bytes > 20MB)`);
+    const raw = readFileSync(full, 'utf8');
+    const lines = raw.split('\n');
+    const totalLines = lines.length;
+    const start = Math.max(1, Math.floor(Number(args.offset) || 1));
+    if (start > totalLines) throw new Error(`offset ${start} is past the end of the file (${totalLines} lines)`);
+    const limit = Math.min(Math.max(Math.floor(Number(args.limit) || READ_MAX_LINES), 1), READ_MAX_LINES);
+
+    let end = Math.min(start - 1 + limit, totalLines);
+    let content = lines.slice(start - 1, end).join('\n');
+    if (content.length > READ_MAX_CHARS) {
+      // Cut at a line boundary under the char budget (always keep at least one line).
+      let acc = 0;
+      let n = 0;
+      for (const l of lines.slice(start - 1, end)) {
+        if (n > 0 && acc + l.length + 1 > READ_MAX_CHARS) break;
+        acc += l.length + 1;
+        n++;
+      }
+      end = start - 1 + n;
+      content = lines.slice(start - 1, end).join('\n');
+    }
+    const truncated = end < totalLines;
+    return {
+      path: args.path,
+      content,
+      size: st.size,
+      totalLines,
+      startLine: start,
+      endLine: end,
+      truncated,
+      ...(truncated ? { nextOffset: end + 1, note: `File continues. Call read_file again with offset=${end + 1}.` } : {}),
+    };
   },
 };
 
@@ -464,6 +500,28 @@ const gitTool: ToolDef = {
 };
 
 // ---------------------------------------------------------------------------
+// Tool: use_skill
+// ---------------------------------------------------------------------------
+// Skills are listed by name + description in the system prompt; the full instructions are
+// loaded only when the model asks for them (progressive disclosure keeps every turn cheap).
+const useSkill: ToolDef = {
+  name: 'use_skill',
+  description: 'Load the full instructions of an installed skill by name. Only call this when the skill is relevant to the task.',
+  parameters: {
+    type: 'object',
+    properties: { name: { type: 'string', description: 'Skill name exactly as listed under "Available skills".' } },
+    required: ['name'],
+  },
+  run: async (args) => {
+    const skills = await import('../skills/index.js');
+    const text = skills.getSkillPromptFragment(String(args.name ?? ''));
+    if (!text) throw new Error(`No installed skill named "${args.name}", or it has no instruction file.`);
+    const MAX = 30_000;
+    return { name: args.name, instructions: text.length > MAX ? text.slice(0, MAX) + '\n[truncated]' : text };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Tool: delete_file
 // ---------------------------------------------------------------------------
 const deleteFile: ToolDef = {
@@ -589,6 +647,7 @@ export const TOOLS: ToolDef[] = [
   editFile,
   runCommand,
   gitTool,
+  useSkill,
   deleteFile,
   moveFile,
   updatePlan,

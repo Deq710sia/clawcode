@@ -339,6 +339,14 @@ Done, typecheck + build pass (UI not run by hand; Windows `run_command` path unt
 
 Still open:
 - Settings lockout: no code-level cause found (modal closes via X, Close, Escape, backdrop). Needs a repro.
-- No tests in the repo. Add handler contract tests before any Tauri work.
+- Tests: `npm test` runs `tests/tools.mjs` (tools + security) and `tests/agent-loop.mjs` (steering, stale runs, Stop) - 44 checks. IPC handler contract tests still missing; add before any Tauri work.
 - Git UI (panel/diff view) not built; only the tool exists.
 - Lockfile note: `npm install` strips `libc` fields from package-lock.json. Edit version lines by hand.
+
+### Pi-inspired changes (design notes)
+Pi (pi.dev) works because the core is tiny, steerable, transparent and cheap per turn. Applied here:
+- **Steering**: typing while the agent runs queues the message (`queuedMessages`); it is delivered at the next step boundary, never between an assistant tool_call and its tool result. Stop clears the queue.
+- **Progressive skill disclosure**: the system prompt lists installed skills as `name: description` only; full instructions load on demand through the `use_skill` tool. Slash commands still inject the full fragment.
+- **Project context**: `AGENTS.md` (or `CLAUDE.md`) at the workspace root is appended to the system prompt each turn (12k char cap), so edits apply immediately.
+- **Token discipline**: `read_file` returns at most 2000 lines / 60k chars per call with `nextOffset`; `run_command` output capped at 200k chars.
+- Deliberately NOT added (Pi omits them too): MCP, sub-agents, permission popups. Candidates next: session branching/tree, `/context` viewer showing the exact system prompt + tool schema token cost, extension hooks.

@@ -111,10 +111,14 @@ const TOOL_SCHEMAS = [
     type: 'function' as const,
     function: {
       name: 'read_file',
-      description: 'Read the full UTF-8 contents of a file in the workspace.',
+      description: 'Read a UTF-8 text file. Large files come back in chunks; if truncated, call again with offset=nextOffset.',
       parameters: {
         type: 'object',
-        properties: { path: { type: 'string' } },
+        properties: {
+          path: { type: 'string' },
+          offset: { type: 'integer', description: 'First line (1-based).' },
+          limit: { type: 'integer', description: 'Max lines.' },
+        },
         required: ['path'],
       },
     },
@@ -168,6 +172,18 @@ const TOOL_SCHEMAS = [
           args: { type: 'array', items: { type: 'string' }, description: 'Arguments after the subcommand, e.g. ["-m", "message"].' },
         },
         required: ['subcommand'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'use_skill',
+      description: 'Load the full instructions of an installed skill listed under "Available skills". Call only when relevant.',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
       },
     },
   },
@@ -332,6 +348,52 @@ function sanitizeForWire(m: ApiMessage): ApiMessage {
   return out;
 }
 
+const CONTEXT_FILES = ['AGENTS.md', 'CLAUDE.md'];
+const CONTEXT_MAX = 12_000;
+const SKILLS_MAX = 40;
+
+/**
+ * Extra system-prompt sections, rebuilt every turn so edits show up immediately:
+ *  - project context from AGENTS.md (or CLAUDE.md) at the workspace root
+ *  - installed skills as "name: description" only; full text is loaded on demand via use_skill
+ */
+async function buildContextSections(hasWorkspace: boolean): Promise<string> {
+  const parts: string[] = [];
+
+  if (hasWorkspace) {
+    // Probe all candidates in parallel (they are tiny local reads); first non-empty match wins.
+    const found = await Promise.all(
+      CONTEXT_FILES.map(async (name) => {
+        try {
+          const res = await window.claw.tool.invoke('read_file', { path: name });
+          const content: string | undefined = res.ok ? res.result?.content : undefined;
+          return content && content.trim() ? { name, content } : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const hit = found.find(Boolean);
+    if (hit) {
+      const body = hit.content.length > CONTEXT_MAX ? hit.content.slice(0, CONTEXT_MAX) + '\n[truncated]' : hit.content;
+      parts.push(`Project instructions (${hit.name}):\n${body.trim()}`);
+    }
+  }
+
+  try {
+    const skills = (await window.claw.skills.installed()).filter((k: any) => k.manifest?.description || k.name);
+    if (skills.length > 0) {
+      const lines = skills.slice(0, SKILLS_MAX).map((k: any) => {
+        const d = String(k.manifest?.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 160);
+        return `- ${k.name}${d ? `: ${d}` : ''}`;
+      });
+      parts.push(`Available skills (call use_skill with the name to load full instructions when relevant):\n${lines.join('\n')}`);
+    }
+  } catch { /* skills unavailable */ }
+
+  return parts.length ? '\n\n' + parts.join('\n\n') : '';
+}
+
 export async function streamChat(opts: StreamChatOpts) {
   const base = normalizeEndpoint(opts.endpoint);
   const url = `${base}/chat/completions`;
@@ -339,7 +401,8 @@ export async function streamChat(opts: StreamChatOpts) {
 
   const messages: ApiMessage[] = [];
   const sys = (opts.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT) +
-    `\n\nWorkspace: ${workspace || '(none selected)'}\nCurrent time: ${new Date().toISOString()}`;
+    `\n\nWorkspace: ${workspace || '(none selected)'}\nCurrent time: ${new Date().toISOString()}` +
+    (await buildContextSections(!!workspace));
   messages.push({ role: 'system', content: sys });
   for (const m of opts.messages) {
     if (m.role === 'tool' && !m.content) continue;

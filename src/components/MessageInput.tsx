@@ -8,6 +8,7 @@ export default function MessageInput() {
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const isStreaming = useClaw((s) => s.isStreaming);
+  const queuedMessages = useClaw((s) => s.queuedMessages);
   const sendUserMessage = useClaw((s) => s.sendUserMessage);
   const stopStreaming = useClaw((s) => s.stopStreaming);
   const workspace = useClaw((s) => s.workspace);
@@ -58,7 +59,7 @@ export default function MessageInput() {
   }, [text]);
 
   const submit = async () => {
-    if (!text.trim() || isStreaming) return;
+    if (!text.trim()) return;
     if (!workspace) return;
 
     // Check for slash command
@@ -128,6 +129,12 @@ export default function MessageInput() {
 
   return (
     <div className="composer">
+      {queuedMessages.length > 0 && (
+        <div className="composer-queue" role="status">
+          {queuedMessages.length === 1 ? 'Queued' : `${queuedMessages.length} queued`}, delivered after the current step:{' '}
+          <span className="mono">{queuedMessages[queuedMessages.length - 1].slice(0, 80)}</span>
+        </div>
+      )}
       <div className="composer-inner">
         <textarea
           ref={taRef}
@@ -164,16 +171,17 @@ export default function MessageInput() {
             )}
           </span>
           <div className="composer-spacer" />
-          {isStreaming ? (
+          {isStreaming && (
             <button className="composer-stop" onClick={stopStreaming} title="Stop">
               <Square size={11} fill="currentColor" />
             </button>
-          ) : (
+          )}
+          {isStreaming && !text.trim() ? null : (
             <button
               className="composer-send"
               onClick={submit}
               disabled={!text.trim() || !workspace}
-              title="Send"
+              title={isStreaming ? 'Send now: delivered after the current step' : 'Send'}
             >
               <ArrowUp size={14} />
             </button>

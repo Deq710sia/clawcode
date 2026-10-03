@@ -15,7 +15,8 @@
     "dist": "npm run build && electron-builder --win --x64",
     "dist:portable": "npm run build && electron-builder --win portable --x64",
     "dist:nsis": "npm run build && electron-builder --win nsis --x64",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json",
+    "test": "node tests/tools.mjs && node tests/agent-loop.mjs"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

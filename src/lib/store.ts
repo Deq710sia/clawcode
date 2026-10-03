@@ -19,6 +19,9 @@ interface ClawState {
   config: PublicConfig | null;
   setConfig: (c: PublicConfig | null) => void;
   switchModel: (endpoint: string, model: string, accountId?: string) => Promise<void>;
+  /** Messages typed while the agent is working; delivered at the next step boundary (steering). */
+  queuedMessages: string[];
+  clearQueuedMessages: () => void;
 
   files: FileEntry[];
   setFiles: (f: FileEntry[]) => void;
@@ -152,9 +155,15 @@ export const useClaw = create<ClawState>((set, get) => ({
   isStreaming: false,
   pendingToolCalls: {},
   plan: [],
+  queuedMessages: [],
+  clearQueuedMessages: () => set({ queuedMessages: [] }),
 
   sendUserMessage: async (text) => {
-    if (get().isStreaming) return;
+    if (get().isStreaming) {
+      // Steering: hold the message and deliver it between steps, never in the middle of a tool round.
+      if (text.trim()) set((s) => ({ queuedMessages: [...s.queuedMessages, text] }));
+      return;
+    }
     const cfg = get().config;
     if (!cfg) return;
 
@@ -173,6 +182,14 @@ export const useClaw = create<ClawState>((set, get) => ({
     streamController = myController;
     // True once this run was replaced (new chat opened / another chat loaded). A stale run must not touch state.
     const stale = () => streamController !== myController;
+    /** Move queued steering messages into the conversation as user messages. Returns true if any were added. */
+    const drainQueue = (): boolean => {
+      const queued = get().queuedMessages;
+      if (queued.length === 0) return false;
+      const added: ChatMessage[] = queued.map((t) => ({ id: uuid(), role: 'user' as const, content: t, createdAt: Date.now() }));
+      set((s) => ({ queuedMessages: [], messages: [...s.messages, ...added] }));
+      return true;
+    };
     const apiKeyRes = await window.claw.config.getApiKey();
     const apiKey = apiKeyRes.apiKey || '';
 
@@ -188,6 +205,8 @@ export const useClaw = create<ClawState>((set, get) => ({
         await get().saveCurrentConversation();
         return;
       }
+
+      drainQueue();
 
       const assistantMsg: ChatMessage = {
         id: uuid(),
@@ -324,6 +343,12 @@ export const useClaw = create<ClawState>((set, get) => ({
 
       if (stale()) return;
 
+      if (!hadToolCalls && get().queuedMessages.length > 0) {
+        // The user steered while this answer was streaming: answer the new message too.
+        set((s) => ({ messages: s.messages.map((m) => (m.id === assistantMsg.id ? { ...m, streaming: false } : m)) }));
+        continue;
+      }
+
       if (!hadToolCalls) {
         // No more tool calls — assistant finished its turn.
         set({ isStreaming: false });
@@ -339,6 +364,8 @@ export const useClaw = create<ClawState>((set, get) => ({
           const res = call.args?.__parse_error
             ? { ok: false as const, error: String(call.args.__parse_error), result: undefined }
             : await window.claw.tool.invoke(call.name, call.args);
+          // The chat may have been replaced while the tool ran: drop the result instead of leaking it.
+          if (stale()) return;
           const finished: ToolCall = {
             ...call,
             state: res.ok ? 'done' : 'error',
@@ -389,6 +416,7 @@ export const useClaw = create<ClawState>((set, get) => ({
             set({ plan: res.result.items });
           }
         } catch (err: any) {
+          if (stale()) return;
           const failed: ToolCall = {
             ...call,
             state: 'error',
@@ -432,7 +460,7 @@ export const useClaw = create<ClawState>((set, get) => ({
       const finalMessages = lastMsg && lastMsg.role === 'assistant'
         ? [...messages.slice(0, -1), { ...lastMsg, content: (lastMsg.content || '') + notice }]
         : [...messages, { id: uuid(), role: 'assistant' as const, content: notice, createdAt: Date.now() }];
-      return { isStreaming: false, messages: finalMessages };
+      return { isStreaming: false, queuedMessages: [], messages: finalMessages };
     });
     // Auto-save the conversation
     await get().saveCurrentConversation();
@@ -440,7 +468,7 @@ export const useClaw = create<ClawState>((set, get) => ({
 
   stopStreaming: () => {
     streamController?.abort();
-    set({ isStreaming: false });
+    set({ isStreaming: false, queuedMessages: [] });
   },
 
   pendingDiffs: [],
@@ -483,6 +511,7 @@ export const useClaw = create<ClawState>((set, get) => ({
     if (!convo) return;
     abortRun();
     set({
+      queuedMessages: [],
       conversationId: convo.id,
       conversationTitle: convo.title,
       messages: convo.messages,
@@ -495,6 +524,7 @@ export const useClaw = create<ClawState>((set, get) => ({
   startNewConversation: () => {
     abortRun();
     set({
+      queuedMessages: [],
       conversationId: null,
       conversationTitle: '',
       messages: [],
