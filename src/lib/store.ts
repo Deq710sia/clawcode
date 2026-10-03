@@ -60,6 +60,12 @@ interface ClawState {
 }
 
 let streamController: AbortController | null = null;
+
+/** Cancel the in-flight agent run and detach it so it can no longer write to the store. */
+function abortRun() {
+  streamController?.abort();
+  streamController = null;
+}
 const MAX_TOOL_ROUNDS = 24;
 
 export interface PlanItem {
@@ -163,13 +169,25 @@ export const useClaw = create<ClawState>((set, get) => ({
       isStreaming: true,
     }));
 
-    streamController = new AbortController();
+    const myController = new AbortController();
+    streamController = myController;
+    // True once this run was replaced (new chat opened / another chat loaded). A stale run must not touch state.
+    const stale = () => streamController !== myController;
     const apiKeyRes = await window.claw.config.getApiKey();
     const apiKey = apiKeyRes.apiKey || '';
 
     // Agentic loop: stream → tool calls → execute → stream again, up to MAX_TOOL_ROUNDS.
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      if (streamController.signal.aborted) break;
+      if (stale()) return;
+      if (myController.signal.aborted) {
+        // Stop pressed: finish quietly (no "max rounds" notice).
+        set((s) => ({
+          isStreaming: false,
+          messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+        }));
+        await get().saveCurrentConversation();
+        return;
+      }
 
       const assistantMsg: ChatMessage = {
         id: uuid(),
@@ -279,10 +297,11 @@ export const useClaw = create<ClawState>((set, get) => ({
           model: cfg.model,
           messages: toApiMessages(get().messages.filter((m) => m.id !== assistantMsg.id)),
           systemPrompt: cfg.systemPrompt,
-          signal: streamController.signal,
+          signal: myController.signal,
           onEvent,
         });
       } catch (err: any) {
+        if (stale()) return;
         if (err?.name === 'AbortError') {
           set((s) => ({
             messages: s.messages.map((m) =>
@@ -303,6 +322,8 @@ export const useClaw = create<ClawState>((set, get) => ({
         return;
       }
 
+      if (stale()) return;
+
       if (!hadToolCalls) {
         // No more tool calls — assistant finished its turn.
         set({ isStreaming: false });
@@ -313,6 +334,7 @@ export const useClaw = create<ClawState>((set, get) => ({
 
       // Execute all tool calls emitted this round, push tool result messages.
       for (const call of pendingToolCallsForThisRound) {
+        if (stale()) return;
         try {
           const res = call.args?.__parse_error
             ? { ok: false as const, error: String(call.args.__parse_error), result: undefined }
@@ -459,6 +481,7 @@ export const useClaw = create<ClawState>((set, get) => ({
   loadConversation: async (id) => {
     const convo = await window.claw.convos.load(id);
     if (!convo) return;
+    abortRun();
     set({
       conversationId: convo.id,
       conversationTitle: convo.title,
@@ -470,6 +493,7 @@ export const useClaw = create<ClawState>((set, get) => ({
     });
   },
   startNewConversation: () => {
+    abortRun();
     set({
       conversationId: null,
       conversationTitle: '',
