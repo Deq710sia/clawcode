@@ -44,7 +44,7 @@ export interface InstalledSkill {
 }
 
 // ---------------------------------------------------------------------------
-// Curated catalog
+// Curated catalog — only real, installable skill repos (not full apps)
 // ---------------------------------------------------------------------------
 const CURATED: Skill[] = [
   {
@@ -61,60 +61,6 @@ const CURATED: Skill[] = [
     description: 'Collection of specialized Claude Code sub-agents for coding, review, debugging.',
     author: 'wshobson',
     repoUrl: 'https://github.com/wshobson/agents',
-    category: 'skill',
-    source: 'curated',
-    installed: false,
-  },
-  {
-    name: 'caveman',
-    description: 'Write code like a caveman — minimal, blunt, no abstractions. Community skill (search GitHub if no canonical repo).',
-    author: 'community',
-    repoUrl: 'https://github.com/search?q=caveman+claude+skill&type=repositories',
-    category: 'skill',
-    source: 'curated',
-    installed: false,
-  },
-  {
-    name: 'ponytail',
-    description: 'Ponytail skill — opinionated, single-minded coding style. Community skill (search GitHub if no canonical repo).',
-    author: 'community',
-    repoUrl: 'https://github.com/search?q=ponytail+agent+skill&type=repositories',
-    category: 'skill',
-    source: 'curated',
-    installed: false,
-  },
-  {
-    name: 'universal-modder',
-    description: 'Universal game/app modding skill — patch binaries, hook functions, inject mods.',
-    author: 'community',
-    repoUrl: 'https://github.com/search?q=universal+modder+agent&type=repositories',
-    category: 'mod',
-    source: 'curated',
-    installed: false,
-  },
-  {
-    name: 'clawhub-skills',
-    description: 'ClawHub community skills index — browse and install community-contributed skills.',
-    author: 'clawhub',
-    repoUrl: 'https://github.com/clawhub/skills',
-    category: 'skill',
-    source: 'curated',
-    installed: false,
-  },
-  {
-    name: 'aider-prompts',
-    description: 'Port of Aider\'s best prompt patterns for use in any agentic harness.',
-    author: 'community',
-    repoUrl: 'https://github.com/Aider-AI/aider',
-    category: 'prompt',
-    source: 'curated',
-    installed: false,
-  },
-  {
-    name: 'odysseus',
-    description: 'PewDiePie\'s Odysseus — self-hosted AI workspace (chat, agents, research, Cookbook for hardware-aware model fitting). Reference implementation for the Cookbook patterns used in ClawCode\'s Models tab.',
-    author: 'pewdiepie-archdaemon',
-    repoUrl: 'https://github.com/pewdiepie-archdaemon/odysseus',
     category: 'skill',
     source: 'curated',
     installed: false,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown, Code2, Bug, FileSearch, FolderOpen } from 'lucide-react';
+import { ChevronDown, Code2, Bug, FileSearch, FolderOpen, Plus, RotateCcw, MessageSquare } from 'lucide-react';
 import { useClaw } from '../lib/store';
 import Message from './Message';
 import MessageInput from './MessageInput';
@@ -18,6 +18,8 @@ export default function ChatPanel() {
   const config = useClaw((s) => s.config);
   const workspace = useClaw((s) => s.workspace);
   const sendUserMessage = useClaw((s) => s.sendUserMessage);
+  const startNewConversation = useClaw((s) => s.startNewConversation);
+  const conversationTitle = useClaw((s) => s.conversationTitle);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -34,7 +36,6 @@ export default function ChatPanel() {
     setShowScrollBtn(!nearBottom && messages.length > 0);
   }, [isNearBottom, messages.length]);
 
-  // Only auto-scroll if user is near the bottom (don't yank them up while reading)
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -53,20 +54,44 @@ export default function ChatPanel() {
     if (workspace) sendUserMessage(text);
   };
 
+  const handleNewChat = () => {
+    startNewConversation();
+  };
+
+  const handleReset = () => {
+    startNewConversation();
+  };
+
   return (
     <div className="chat-panel">
       <div className="chat-header">
         <div className="chat-header-title">
-          <span>Chat</span>
-          {config?.model && <span className="chat-header-model">{config.model}</span>}
+          <span className="chat-header-label">{conversationTitle || 'New Chat'}</span>
         </div>
-        <div className="row tiny muted">
-          {workspace ? (
-            <span className="mono">{workspace.split(/[\\/]/).pop()}</span>
-          ) : (
-            <span>no workspace</span>
+        <div className="chat-header-actions">
+          {workspace && (
+            <span className="mono tiny muted" style={{ marginRight: 6 }}>
+              {workspace.split(/[\\/]/).pop()}
+            </span>
           )}
           <AccountSwitcher />
+          <button
+            className="chat-header-btn"
+            onClick={handleReset}
+            data-tooltip="Clear conversation"
+            aria-label="Clear conversation"
+          >
+            <RotateCcw size={13} />
+          </button>
+          <button
+            className="chat-header-btn primary"
+            onClick={handleNewChat}
+            data-tooltip="New conversation"
+            aria-label="New conversation"
+          >
+            <Plus size={13} />
+            <span>New</span>
+          </button>
         </div>
       </div>
 
@@ -76,7 +101,7 @@ export default function ChatPanel() {
             <div className="chat-empty-icon">C</div>
             <div className="chat-empty-title">ClawCode</div>
             <div className="chat-empty-sub">
-              A clean-room agentic coding harness. Open a folder, then ask me to explore, build, or fix something — I'll call tools to read, edit, and run code in your workspace.
+              Open a folder, then ask me to explore, build, or fix something — I'll call tools to read, edit, and run code in your workspace.
             </div>
             {workspace ? (
               <div className="chat-empty-suggestions">
