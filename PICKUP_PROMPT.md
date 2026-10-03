@@ -350,3 +350,34 @@ Pi (pi.dev) works because the core is tiny, steerable, transparent and cheap per
 - **Project context**: `AGENTS.md` (or `CLAUDE.md`) at the workspace root is appended to the system prompt each turn (12k char cap), so edits apply immediately.
 - **Token discipline**: `read_file` returns at most 2000 lines / 60k chars per call with `nextOffset`; `run_command` output capped at 200k chars.
 - Deliberately NOT added (Pi omits them too): MCP, sub-agents, permission popups. Candidates next: session branching/tree, `/context` viewer showing the exact system prompt + tool schema token cost, extension hooks.
+
+### WebChat bridge parity audit (bridge == API for the same model)
+Goal: using a web chat through the bridge should be as close to identical to the API path as a
+browser can be, and as token-efficient as top harnesses. Applied (commit on top of 760e0fe):
+- **Stateful continuation** (`continuation.ts`): the bridge remembers what the open site chat
+  contains (per-session `ChatState`: head hash of system+tools, signature per message). A request
+  that extends the previous one exactly sends ONLY the new messages (lone user message verbatim);
+  anything else safely re-sends the full transcript. 12-round loop measured >75% fewer characters
+  than re-pasting. Failed continuation retries once as a fresh chat when nothing was streamed.
+- **Reply fidelity** (`drivers/dom-markdown.ts`): bubbles are converted DOM->markdown (fences with
+  language labels, tight nested lists, GFM tables, emphasis, links, KaTeX -> TeX, "Copy code"
+  never leaks). Runs inside the page via `handle.evaluate`; the function is fully self-contained
+  (verified: revived from `toString()` and re-tested). innerText is the fallback.
+- **Streaming**: only complete lines are emitted (a line's markdown shape can change mid-typing);
+  the server re-guards monotonicity before sending chunks.
+- **Composer robustness** (`drivers/base.ts`): textarea composers use `fill()`; rich
+  contenteditable editors (Claude's ProseMirror) verify the text landed and fall back to a real
+  clipboard paste (`navigator.clipboard` permissions granted on the context), so multi-line
+  prompts can't be silently collapsed.
+- **Plain-text tool results** (`src/lib/toolformat.ts`): read_file returns the raw file, command
+  output is labeled only on failure, edit_file drops the diff. Identical bytes for API and bridge
+  paths (store.ts renders tool messages through it).
+- **Tool signatures** show enum values + short param descriptions; the contradictory
+  CONVERSATIONAL SYNTHESIS block is gone; the tool-result safety net is 64k and announces omissions.
+- **Real stream errors**: bridge errors go out as `{"error": ...}` SSE events (client surfaces
+  them) instead of being appended to the reply as `[bridge error]` text.
+- Verified NOT an issue: the ctx indicator in StatusBar is client-side (chars/4), so the bridge
+  reporting `usage: 0` never affected it; account usage bars come from the accounts module.
+- Tests: `tests/webchat.mjs` (40 checks; linkedom devDependency for DOM fixtures). Full suite:
+  82 checks across tools/agent-loop/webchat. `domToMarkdown.toString()` self-containment is
+  verified by hand (see above) — if you edit that file, keep it free of outer-scope references.
