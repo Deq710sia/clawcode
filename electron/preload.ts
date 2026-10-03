@@ -1,0 +1,76 @@
+/**
+ * ClawCode — preload script
+ * Exposes a tight, audited `claw` API to the renderer via contextBridge.
+ */
+import { contextBridge, ipcRenderer } from 'electron';
+
+const api = {
+  config: {
+    get: () => ipcRenderer.invoke('config:get'),
+    set: (patch: any) => ipcRenderer.invoke('config:set', patch),
+    setApiKey: (plain: string) => ipcRenderer.invoke('config:setApiKey', plain),
+    getApiKey: () => ipcRenderer.invoke('config:getApiKey'),
+  },
+  workspace: {
+    pick: () => ipcRenderer.invoke('workspace:pick'),
+    set: (ws: string) => ipcRenderer.invoke('workspace:set', ws),
+    get: () => ipcRenderer.invoke('workspace:get'),
+  },
+  tool: {
+    invoke: (name: string, args: any) => ipcRenderer.invoke('tool:invoke', name, args),
+  },
+  shell: {
+    exec: (command: string, opts?: { cwd?: string; timeoutMs?: number }) =>
+      ipcRenderer.invoke('shell:exec', command, opts),
+  },
+  app: {
+    info: () => ipcRenderer.invoke('app:info'),
+    openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+  },
+  providers: {
+    list: () => ipcRenderer.invoke('providers:list'),
+  },
+  webchat: {
+    profiles: () => ipcRenderer.invoke('webchat:profiles'),
+    status: () => ipcRenderer.invoke('webchat:status'),
+    login: (id: string) => ipcRenderer.invoke('webchat:login', id),
+    reset: (id: string) => ipcRenderer.invoke('webchat:reset', id),
+    bridgeUrl: () => ipcRenderer.invoke('webchat:bridgeUrl'),
+  },
+  opencode: {
+    probe: () => ipcRenderer.invoke('opencode:probe'),
+    status: () => ipcRenderer.invoke('opencode:status'),
+    start: (opts: any) => ipcRenderer.invoke('opencode:start', opts),
+    stop: () => ipcRenderer.invoke('opencode:stop'),
+  },
+  skills: {
+    curated: () => ipcRenderer.invoke('skills:curated'),
+    installed: () => ipcRenderer.invoke('skills:installed'),
+    search: (opts: any) => ipcRenderer.invoke('skills:search', opts),
+    install: (repoUrl: string, name?: string) => ipcRenderer.invoke('skills:install', repoUrl, name),
+    uninstall: (name: string) => ipcRenderer.invoke('skills:uninstall', name),
+    prompts: () => ipcRenderer.invoke('skills:prompts'),
+    fragment: (name: string) => ipcRenderer.invoke('skills:fragment', name),
+  },
+  hf: {
+    search: (opts: any) => ipcRenderer.invoke('hf:search', opts),
+    trending: (limit?: number) => ipcRenderer.invoke('hf:trending', limit),
+    gguf: (limit?: number) => ipcRenderer.invoke('hf:gguf', limit),
+    files: (modelId: string) => ipcRenderer.invoke('hf:files', modelId),
+    downloaded: () => ipcRenderer.invoke('hf:downloaded'),
+    download: (modelId: string) => ipcRenderer.invoke('hf:download', modelId),
+    delete: (name: string) => ipcRenderer.invoke('hf:delete', name),
+    probeCli: () => ipcRenderer.invoke('hf:probeCli'),
+    hardware: () => ipcRenderer.invoke('hf:hardware'),
+    cookbook: () => ipcRenderer.invoke('hf:cookbook'),
+    estimateFit: (paramB: number, vramBytes: number, ramBytes?: number, ctx?: number) =>
+      ipcRenderer.invoke('hf:estimateFit', paramB, vramBytes, ramBytes, ctx),
+    modelfile: (model: any, ggufPath: string, quant: string) =>
+      ipcRenderer.invoke('hf:modelfile', model, ggufPath, quant),
+  },
+  platform: process.platform,
+};
+
+contextBridge.exposeInMainWorld('claw', api);
+
+export type ClawApi = typeof api;
