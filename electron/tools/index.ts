@@ -289,31 +289,83 @@ const runCommand: ToolDef = {
     }
 
     // Default: spawn directly (no sandbox)
-    const { spawn } = await import('node:child_process');
+    const { spawn, execFile } = await import('node:child_process');
     const isWin = process.platform === 'win32';
+    const MAX_OUT = 200_000; // chars kept per stream; protects memory and the model's context
+    const timeoutMs = Math.min(Math.max(Number(args.timeoutMs) || 120_000, 1_000), 600_000);
+
     return new Promise((resolve) => {
-      const child = spawn(args.command, {
-        cwd: ctx.workspace,
-        shell: isWin ? 'powershell.exe' : '/bin/bash',
-        env: process.env,
-        windowsHide: true,
-      });
+      // Windows: no profile, non-interactive, UTF-8 output so non-ASCII is not mangled.
+      // The `$LASTEXITCODE` tail makes native-command failures surface as the exit code.
+      const child = isWin
+        ? spawn(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-ExecutionPolicy', 'Bypass',
+              '-Command',
+              `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Continue'; ${args.command}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`,
+            ],
+            { cwd: ctx.workspace, env: process.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+          )
+        : spawn(args.command, {
+            cwd: ctx.workspace,
+            shell: '/bin/bash',
+            env: process.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: true, // own process group so the whole tree can be killed
+          });
+
       let stdout = '';
       let stderr = '';
-      const timer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch {}
-        stderr += '\n[ClawCode] process timed out';
-      }, Math.min(args.timeoutMs ?? 120_000, 600_000));
+      let truncated = false;
+      let timedOut = false;
+      let settled = false;
+      const append = (cur: string, d: Buffer) => {
+        if (cur.length >= MAX_OUT) { truncated = true; return cur; }
+        const next = cur + d.toString('utf8');
+        if (next.length > MAX_OUT) { truncated = true; return next.slice(0, MAX_OUT); }
+        return next;
+      };
 
-      child.stdout.on('data', (d) => (stdout += d.toString()));
-      child.stderr.on('data', (d) => (stderr += d.toString()));
-      child.on('error', (err) => {
+      const killTree = () => {
+        const pid = child.pid;
+        if (!pid) return;
+        if (isWin) {
+          // child.kill() would leave grandchildren (npm, node, etc.) running and holding the pipes open.
+          execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {});
+        } else {
+          try { process.kill(-pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+        }
+      };
+
+      let hardStop: NodeJS.Timeout | undefined;
+      const finish = (r: any) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        resolve({ ok: false, error: err.message, stdout, stderr });
-      });
+        if (hardStop) clearTimeout(hardStop);
+        if (truncated) r.stderr = (r.stderr ?? '') + `\n[ClawCode] output truncated to ${MAX_OUT} characters per stream`;
+        resolve(r);
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killTree();
+        // If something still holds the pipes after the kill, do not hang forever.
+        hardStop = setTimeout(
+          () => finish({ ok: false, exitCode: null, timedOut: true, stdout, stderr: stderr + '\n[ClawCode] process timed out and was force-stopped' }),
+          5_000,
+        );
+      }, timeoutMs);
+
+      child.stdout?.on('data', (d: Buffer) => (stdout = append(stdout, d)));
+      child.stderr?.on('data', (d: Buffer) => (stderr = append(stderr, d)));
+      child.on('error', (err) => finish({ ok: false, error: err.message, stdout, stderr }));
       child.on('close', (code) => {
-        clearTimeout(timer);
-        resolve({ ok: code === 0, exitCode: code, stdout, stderr });
+        if (timedOut) stderr += `\n[ClawCode] process timed out after ${timeoutMs} ms and was killed`;
+        finish({ ok: !timedOut && code === 0, exitCode: code, timedOut, stdout, stderr });
       });
     });
   },
