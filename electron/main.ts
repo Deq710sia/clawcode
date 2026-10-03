@@ -20,6 +20,7 @@ import * as HF from './huggingface.js';
 import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import * as Sandbox from './sandbox.js';
+import * as ProcessSandbox from './process-sandbox.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -475,11 +476,17 @@ function registerIpc() {
     return { ok: true };
   });
 
-  // ----- Windows Sandbox -----
+  // ----- Windows Sandbox (VM-based, full isolation) -----
   ipcMain.handle('sandbox:available', () => Sandbox.isSandboxAvailable());
   ipcMain.handle('sandbox:generate', (_e, config: any) => {
     const wsbPath = Sandbox.writeWsbFile({ ...Sandbox.DEFAULT_SANDBOX_CONFIG, ...config });
     return { ok: true, wsbPath, content: Sandbox.generateWsb({ ...Sandbox.DEFAULT_SANDBOX_CONFIG, ...config }) };
   });
   ipcMain.handle('sandbox:launch', (_e, config: any) => Sandbox.launchSandbox({ ...Sandbox.DEFAULT_SANDBOX_CONFIG, ...config }));
+
+  // ----- Process Sandbox (Codex-style restricted user, seamless) -----
+  ipcMain.handle('psandbox:status', () => ProcessSandbox.getSandboxStatus());
+  ipcMain.handle('psandbox:setup', async (_e, opts: any) => ProcessSandbox.setupSandbox(opts || {}));
+  ipcMain.handle('psandbox:disable', async () => ProcessSandbox.disableSandbox());
+  ipcMain.handle('psandbox:teardown', async () => ProcessSandbox.teardownSandbox());
 }

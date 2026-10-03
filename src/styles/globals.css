@@ -2283,3 +2283,80 @@ textarea {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* =========================================================================
+   Process sandbox (Codex-style restricted user)
+   ========================================================================= */
+.sandbox-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin-bottom: 4px;
+}
+
+.sandbox-section-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  background: var(--bg-3);
+  color: var(--fg-3);
+}
+
+.sandbox-section-tag.recommended {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--ok);
+}
+
+.sandbox-divider {
+  border: none;
+  border-top: 1px solid var(--border-1);
+  margin: 20px 0 12px;
+}
+
+.psandbox-status-grid {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.psandbox-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  border: 1px solid var(--border-2);
+  background: var(--bg-0);
+  color: var(--fg-2);
+}
+
+.psandbox-badge.ok {
+  border-color: rgba(74, 222, 128, 0.3);
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.05);
+}
+
+.psandbox-badge.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: rgba(250, 204, 21, 0.05);
+}
+
+.psandbox-badge.muted {
+  color: var(--fg-3);
+}
+
+.sandbox-msg.warn {
+  background: rgba(250, 204, 21, 0.08);
+  border-color: var(--warn);
+  color: var(--warn);
+}

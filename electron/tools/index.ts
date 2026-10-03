@@ -211,7 +211,7 @@ const editFile: ToolDef = {
 const runCommand: ToolDef = {
   name: 'run_command',
   description:
-    'Execute a shell command in the workspace. Returns { ok, exitCode, stdout, stderr }. The command runs via bash on macOS/Linux and PowerShell on Windows. Timeout: 120s.',
+    'Execute a shell command in the workspace. Returns { ok, exitCode, stdout, stderr }. The command runs via bash on macOS/Linux and PowerShell on Windows. Timeout: 120s. If process sandbox is enabled in Settings, the command runs as a restricted local user with filesystem + network isolation.',
   parameters: {
     type: 'object',
     properties: {
@@ -221,7 +221,28 @@ const runCommand: ToolDef = {
     required: ['command'],
   },
   run: async (args, ctx) => {
-    // Defer to the IPC `shell:exec` channel by re-using spawn inline.
+    // Check if process sandbox is enabled — if so, route through runCommandSandboxed
+    try {
+      const { loadSandboxConfig } = await import('../process-sandbox.js');
+      const cfg = loadSandboxConfig();
+      if (cfg.enabled && cfg.passwordCipher && ctx.workspace) {
+        const { runCommandSandboxed } = await import('../process-sandbox.js');
+        const result = await runCommandSandboxed(args.command, {
+          cwd: ctx.workspace,
+          timeoutMs: args.timeoutMs,
+        });
+        return {
+          ok: result.ok,
+          exitCode: result.exitCode,
+          stdout: result.stdout,
+          stderr: result.stderr + '\n[sandboxed: ran as restricted user "ClawCodeSandbox"]',
+        };
+      }
+    } catch {
+      // If sandbox module fails to load, fall through to normal execution
+    }
+
+    // Default: spawn directly (no sandbox)
     const { spawn } = await import('node:child_process');
     const isWin = process.platform === 'win32';
     return new Promise((resolve) => {

@@ -190,6 +190,17 @@ export interface UpdaterProgress {
   bytesPerSecond: number;
 }
 
+export interface ProcessSandboxStatus {
+  platform: string;
+  elevated: boolean;
+  userExists: boolean;
+  enabled: boolean;
+  configured: boolean;
+  workspacePath?: string;
+  denyNetwork: boolean;
+  sandboxUser: string;
+}
+
 declare global {
   interface Window {
     claw: {
@@ -272,6 +283,12 @@ declare global {
         available: () => Promise<boolean>;
         generate: (config: any) => Promise<{ ok: boolean; wsbPath?: string; content?: string }>;
         launch: (config: any) => Promise<{ ok: boolean; error?: string; wsbPath?: string }>;
+      };
+      psandbox: {
+        status: () => Promise<ProcessSandboxStatus>;
+        setup: (opts: any) => Promise<{ ok: boolean; error?: string }>;
+        disable: () => Promise<{ ok: boolean; error?: string }>;
+        teardown: () => Promise<{ ok: boolean; error?: string }>;
       };
       platform: string;
     };

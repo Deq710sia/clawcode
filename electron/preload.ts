@@ -90,6 +90,12 @@ const api = {
     generate: (config: any) => ipcRenderer.invoke('sandbox:generate', config),
     launch: (config: any) => ipcRenderer.invoke('sandbox:launch', config),
   },
+  psandbox: {
+    status: () => ipcRenderer.invoke('psandbox:status'),
+    setup: (opts: any) => ipcRenderer.invoke('psandbox:setup', opts),
+    disable: () => ipcRenderer.invoke('psandbox:disable'),
+    teardown: () => ipcRenderer.invoke('psandbox:teardown'),
+  },
   platform: process.platform,
 };
 
