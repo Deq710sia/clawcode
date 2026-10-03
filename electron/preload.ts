@@ -68,6 +68,23 @@ const api = {
     modelfile: (model: any, ggufPath: string, quant: string) =>
       ipcRenderer.invoke('hf:modelfile', model, ggufPath, quant),
   },
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    currentVersion: () => ipcRenderer.invoke('updater:currentVersion'),
+    openReleases: () => ipcRenderer.invoke('updater:openReleases'),
+    onState: (cb: (state: any) => void) => {
+      const handler = (_e: any, data: any) => cb(data);
+      ipcRenderer.on('updater:state', handler);
+      return () => ipcRenderer.removeListener('updater:state', handler);
+    },
+    onProgress: (cb: (p: any) => void) => {
+      const handler = (_e: any, data: any) => cb(data);
+      ipcRenderer.on('updater:progress', handler);
+      return () => ipcRenderer.removeListener('updater:progress', handler);
+    },
+  },
   platform: process.platform,
 };
 

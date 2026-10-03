@@ -2008,3 +2008,116 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* =========================================================================
+   Update panel (auto-updater UI)
+   ========================================================================= */
+.update-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.update-current {
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.update-current-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.update-current-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--fg-0);
+  font-weight: 600;
+}
+
+.update-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+}
+
+.update-state.idle { border-color: var(--border-1); }
+.update-state.up-to-date { border-color: rgba(74, 222, 128, 0.3); background: rgba(74, 222, 128, 0.05); }
+.update-state.available { border-color: rgba(167, 139, 250, 0.3); background: var(--accent-faint); }
+.update-state.downloaded { border-color: rgba(74, 222, 128, 0.3); background: rgba(74, 222, 128, 0.05); }
+.update-state.error { border-color: var(--err); background: rgba(248, 113, 113, 0.05); }
+
+.update-state-text {
+  font-size: 12px;
+  color: var(--fg-1);
+  line-height: 1.55;
+  flex: 1;
+}
+
+.update-downloading {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-progress-bar {
+  height: 6px;
+  background: var(--bg-3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent-bright));
+  transition: width 0.2s ease;
+  border-radius: 3px;
+}
+
+.update-progress-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+}
+
+.update-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.update-note {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--fg-2);
+  line-height: 1.6;
+}
+
+.update-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--info);
+}

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Eye, EyeOff, Save, Trash2, Globe, Cpu, Bot, Cloud, Server } from 'lucide-react';
+import { X, Eye, EyeOff, Save, Trash2, Globe, Cpu, Bot, Cloud, Server, RefreshCw } from 'lucide-react';
 import { useClaw } from '../lib/store';
 import { defaultSystemPrompt } from '../lib/api';
 import type { ProviderPreset, WebChatProfile, OpenCodeStatus } from '../types';
+import UpdatePanel from './UpdatePanel';
 
-type Tab = 'provider' | 'webchats' | 'opencode' | 'advanced';
+type Tab = 'provider' | 'webchats' | 'opencode' | 'advanced' | 'updates';
 
 export default function SettingsModal() {
   const setShowSettings = useClaw((s) => s.setShowSettings);
@@ -110,6 +111,7 @@ export default function SettingsModal() {
     { id: 'provider', label: 'Provider', icon: Cloud },
     { id: 'webchats', label: 'Web Chats', icon: Globe },
     { id: 'opencode', label: 'OpenCode', icon: Bot },
+    { id: 'updates', label: 'Updates', icon: RefreshCw },
     { id: 'advanced', label: 'Advanced', icon: Cpu },
   ];
 
@@ -328,6 +330,8 @@ export default function SettingsModal() {
               </div>
             </>
           )}
+
+          {tab === 'updates' && <UpdatePanel />}
         </div>
 
         <div className="modal-footer">

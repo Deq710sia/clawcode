@@ -1,6 +1,6 @@
 {
   "name": "clawcode",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "ClawCode — universal agentic harness (Electron + OpenCode + WebChat Bridge)",
   "author": "ClawCode",
   "license": "MIT",
@@ -47,13 +47,20 @@
     "@types/cors": "^2.8.17",
     "playwright": "^1.42.1",
     "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.4.29"
+    "puppeteer-extra-plugin-stealth": "^2.4.29",
+    "electron-updater": "^6.3.9"
   },
   "build": {
     "appId": "com.clawcode.app",
     "productName": "ClawCode",
     "directories": {
       "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Deq710sia",
+      "repo": "clawcode",
+      "releaseType": "release"
     },
     "files": [
       "dist/**/*",
@@ -69,6 +76,7 @@
     ],
     "win": {
       "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",

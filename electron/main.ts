@@ -17,6 +17,7 @@ import { probeOpenCode, startOpenCode, stopOpenCode, getOpenCodeStatus, proxyToO
 import { PROVIDERS } from './providers/index.js';
 import * as Skills from './skills/index.js';
 import * as HF from './huggingface.js';
+import { autoUpdater } from 'electron-updater';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -99,11 +100,65 @@ app.whenReady().then(async () => {
     console.log(`[clawcode] WebChat bridge listening on 127.0.0.1:${bridgeStatus.port}`);
   }
 
+  // Auto-updater config (GitHub releases)
+  autoUpdater.autoDownload = false;       // user clicks button to download
+  autoUpdater.autoInstallOnAppQuit = true; // install on next launch if downloaded
+  autoUpdater.allowDowngrade = false;
+  // Log updater events to console for debugging
+  const logUpdater = (label: string) => () => console.log(`[updater:${label}]`);
+  autoUpdater.on('checking-for-update', logUpdater('checking'));
+  autoUpdater.on('update-available', (info: any) => {
+    console.log('[updater] update available:', info?.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:state', {
+        state: 'available',
+        version: info?.version,
+        releaseNotes: info?.releaseNotes,
+        releaseUrl: info?.releaseName ? `https://github.com/Deq710sia/clawcode/releases/tag/v${info.version}` : undefined,
+      });
+    }
+  });
+  autoUpdater.on('update-not-available', (info: any) => {
+    console.log('[updater] up to date');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:state', { state: 'up-to-date', version: info?.version || app.getVersion() });
+    }
+  });
+  autoUpdater.on('error', (err: Error) => {
+    console.error('[updater] error:', err?.message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:state', { state: 'error', error: err?.message ?? String(err) });
+    }
+  });
+  autoUpdater.on('download-progress', (progress: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:progress', {
+        percent: progress?.percent ?? 0,
+        transferred: progress?.transferred,
+        total: progress?.total,
+        bytesPerSecond: progress?.bytesPerSecond,
+      });
+    }
+  });
+  autoUpdater.on('update-downloaded', (info: any) => {
+    console.log('[updater] downloaded:', info?.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('updater:state', { state: 'downloaded', version: info?.version });
+    }
+  });
+
   registerTools(ipcMain, {
     pwd: () => state.workspace,
   });
   registerIpc();
   createWindow();
+
+  // Auto-check for updates 5s after launch (silent)
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err: any) => {
+      console.warn('[updater] initial check failed:', err?.message);
+    });
+  }, 5000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -376,4 +431,45 @@ function registerIpc() {
   ipcMain.handle('hf:modelfile', (_e, model: any, ggufPath: string, quant: string) =>
     HF.generateOllamaModelfile(model, ggufPath, quant as any)
   );
+
+  // ----- Auto-updater -----
+  ipcMain.handle('updater:check', async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return {
+        ok: true,
+        version: result?.updateInfo?.version,
+        available: !!result?.updateInfo,
+      };
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) };
+    }
+  });
+
+  ipcMain.handle('updater:download', async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) };
+    }
+  });
+
+  ipcMain.handle('updater:install', () => {
+    // Install + restart. All user data (config, skills, models, webchat profiles)
+    // lives in app.getPath('userData'), keyed by appId — preserved across versions.
+    try {
+      setImmediate(() => autoUpdater.quitAndInstall(true, true));
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) };
+    }
+  });
+
+  ipcMain.handle('updater:currentVersion', () => app.getVersion());
+
+  ipcMain.handle('updater:openReleases', () => {
+    shell.openExternal('https://github.com/Deq710sia/clawcode/releases/latest');
+    return { ok: true };
+  });
 }

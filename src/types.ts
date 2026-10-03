@@ -174,6 +174,22 @@ export interface FitEstimate {
   reason: string;
 }
 
+export type UpdaterState =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'up-to-date'; version: string }
+  | { state: 'available'; version: string; releaseNotes?: string; releaseUrl?: string }
+  | { state: 'downloading' }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; error: string };
+
+export interface UpdaterProgress {
+  percent: number;
+  transferred: number;
+  total: number;
+  bytesPerSecond: number;
+}
+
 declare global {
   interface Window {
     claw: {
@@ -242,6 +258,15 @@ declare global {
         cookbook: () => Promise<CookbookModel[]>;
         estimateFit: (paramB: number, vramBytes: number, ramBytes?: number, ctx?: number) => Promise<FitEstimate>;
         modelfile: (model: any, ggufPath: string, quant: string) => Promise<string>;
+      };
+      updater: {
+        check: () => Promise<{ ok: boolean; version?: string; available?: boolean; error?: string }>;
+        download: () => Promise<{ ok: boolean; error?: string }>;
+        install: () => Promise<{ ok: boolean; error?: string }>;
+        currentVersion: () => Promise<string>;
+        openReleases: () => Promise<{ ok: boolean }>;
+        onState: (cb: (state: UpdaterState) => void) => () => void;
+        onProgress: (cb: (p: UpdaterProgress) => void) => () => void;
       };
       platform: string;
     };
