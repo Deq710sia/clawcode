@@ -109,7 +109,7 @@ export default function ChatPanel() {
                 ))}
               </div>
             ) : (
-              <button className="btn primary" style={{ marginTop: 12 }} onClick={() => useClaw.getState().setShowWelcome(true)}>
+              <button className="btn primary" style={{ marginTop: 12 }} onClick={async () => { const r = await window.claw.workspace.pick(); if (r.ok && r.workspace) useClaw.getState().setWorkspace(r.workspace); }}>
                 <FolderOpen size={12} /> Open a workspace to get started
               </button>
             )}

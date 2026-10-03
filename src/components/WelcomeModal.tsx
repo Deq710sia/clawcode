@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, ArrowRight, Settings } from 'lucide-react';
+import { X, ArrowRight, FolderOpen } from 'lucide-react';
 import { useClaw } from '../lib/store';
 
 export default function WelcomeModal() {
@@ -36,15 +36,25 @@ export default function WelcomeModal() {
             </div>
 
             <div className="welcome-steps">
-              <div className="welcome-step">
+              <div className="welcome-step" hidden={step !== 0}>
                 <div className="welcome-step-num">1</div>
-                <div><strong>Open a folder</strong> — ClawCode only operates inside this workspace.</div>
+                <div>
+                  <strong>Open a folder</strong> — ClawCode only operates inside this workspace.
+                  <div style={{ marginTop: 8 }}>
+                    <button className="btn" onClick={async () => {
+                      const r = await window.claw.workspace.pick();
+                      if (r.ok && r.workspace) { useClaw.getState().setWorkspace(r.workspace); setStep(1); }
+                    }}>
+                      <FolderOpen size={12} /> Choose folder
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="welcome-step">
+              <div className="welcome-step" hidden={step !== 1}>
                 <div className="welcome-step-num">2</div>
                 <div><strong>Configure your endpoint</strong> — pick OpenAI, OpenRouter, Ollama, or any OpenAI-compatible server, and drop in your API key.</div>
               </div>
-              <div className="welcome-step">
+              <div className="welcome-step" hidden={step !== 2}>
                 <div className="welcome-step-num">3</div>
                 <div><strong>Start chatting</strong> — ask ClawCode to explore, build, or fix. It'll call tools and show diffs you can review inline.</div>
               </div>
@@ -53,6 +63,7 @@ export default function WelcomeModal() {
         </div>
 
         <div className="modal-footer">
+          <span className="tiny muted" style={{ marginRight: 'auto' }}>Step {step + 1} of 3</span>
           <button className="btn ghost" onClick={skip}>Skip</button>
           <button className="btn primary" onClick={next}>
             {step < 2 ? 'Next' : 'Configure'} <ArrowRight size={12} />
