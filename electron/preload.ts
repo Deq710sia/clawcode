@@ -85,6 +85,11 @@ const api = {
       return () => ipcRenderer.removeListener('updater:progress', handler);
     },
   },
+  sandbox: {
+    available: () => ipcRenderer.invoke('sandbox:available'),
+    generate: (config: any) => ipcRenderer.invoke('sandbox:generate', config),
+    launch: (config: any) => ipcRenderer.invoke('sandbox:launch', config),
+  },
   platform: process.platform,
 };
 

@@ -17,7 +17,9 @@ import { probeOpenCode, startOpenCode, stopOpenCode, getOpenCodeStatus, proxyToO
 import { PROVIDERS } from './providers/index.js';
 import * as Skills from './skills/index.js';
 import * as HF from './huggingface.js';
-import { autoUpdater } from 'electron-updater';
+import pkg from 'electron-updater';
+const { autoUpdater } = pkg;
+import * as Sandbox from './sandbox.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -472,4 +474,12 @@ function registerIpc() {
     shell.openExternal('https://github.com/Deq710sia/clawcode/releases/latest');
     return { ok: true };
   });
+
+  // ----- Windows Sandbox -----
+  ipcMain.handle('sandbox:available', () => Sandbox.isSandboxAvailable());
+  ipcMain.handle('sandbox:generate', (_e, config: any) => {
+    const wsbPath = Sandbox.writeWsbFile({ ...Sandbox.DEFAULT_SANDBOX_CONFIG, ...config });
+    return { ok: true, wsbPath, content: Sandbox.generateWsb({ ...Sandbox.DEFAULT_SANDBOX_CONFIG, ...config }) };
+  });
+  ipcMain.handle('sandbox:launch', (_e, config: any) => Sandbox.launchSandbox({ ...Sandbox.DEFAULT_SANDBOX_CONFIG, ...config }));
 }

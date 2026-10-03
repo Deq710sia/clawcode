@@ -268,6 +268,11 @@ declare global {
         onState: (cb: (state: UpdaterState) => void) => () => void;
         onProgress: (cb: (p: UpdaterProgress) => void) => () => void;
       };
+      sandbox: {
+        available: () => Promise<boolean>;
+        generate: (config: any) => Promise<{ ok: boolean; wsbPath?: string; content?: string }>;
+        launch: (config: any) => Promise<{ ok: boolean; error?: string; wsbPath?: string }>;
+      };
       platform: string;
     };
   }

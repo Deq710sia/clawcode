@@ -2121,3 +2121,165 @@ textarea {
   margin-top: 2px;
   color: var(--info);
 }
+
+/* =========================================================================
+   Sandbox panel (Windows Sandbox integration)
+   ========================================================================= */
+.sandbox-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sandbox-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  font-size: 12px;
+}
+
+.sandbox-status.available { border-color: rgba(74, 222, 128, 0.3); background: rgba(74, 222, 128, 0.05); }
+.sandbox-status.unavailable { border-color: var(--warn); background: rgba(250, 204, 21, 0.05); }
+
+.sandbox-instructions {
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 12px;
+  color: var(--fg-1);
+  line-height: 1.6;
+}
+
+.sandbox-instructions-title {
+  font-weight: 600;
+  color: var(--fg-0);
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.sandbox-instructions ol {
+  margin: 8px 0 8px 20px;
+}
+
+.sandbox-instructions li {
+  margin-bottom: 4px;
+}
+
+.sandbox-note {
+  font-size: 11px;
+  color: var(--fg-2);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-1);
+}
+
+.sandbox-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sandbox-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+
+.sandbox-option:hover { border-color: var(--border-2); }
+
+.sandbox-option input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.sandbox-option svg {
+  color: var(--accent-bright);
+  flex-shrink: 0;
+}
+
+.sandbox-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sandbox-msg {
+  padding: 10px 12px;
+  background: var(--accent-faint);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--fg-1);
+  line-height: 1.5;
+}
+
+.sandbox-protection {
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 11px;
+  color: var(--fg-1);
+  line-height: 1.6;
+}
+
+.sandbox-protection-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--fg-0);
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.sandbox-protection-title svg { color: var(--ok); }
+
+.sandbox-protection ul {
+  margin: 4px 0 0 18px;
+}
+
+.sandbox-protection li {
+  margin-bottom: 4px;
+}
+
+.sandbox-wsb-preview {
+  background: var(--bg-0);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.sandbox-wsb-preview summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+
+.sandbox-wsb-preview pre {
+  margin-top: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 10px;
+  color: var(--fg-1);
+  overflow-x: auto;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
