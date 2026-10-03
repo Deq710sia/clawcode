@@ -138,9 +138,25 @@ function loadManifest(skillPath: string): SkillManifest | null {
   return null;
 }
 
+/** Skill names come from the renderer and end up in rmSync(recursive, force). Accept only plain names. */
+function skillDir(name: string): string | null {
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/.test(name) || name.includes('..')) return null;
+  return join(skillsDir(), name);
+}
+
+/** Only plain https GitHub repo URLs are cloneable; blocks ext::, file://, ssh and option-like strings. */
+function isCloneableRepoUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' && u.hostname === 'github.com' && !u.username && !u.password && /^\/[^/]+\/[^/]+/.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function getSkillPromptFragment(name: string): string | null {
-  const dir = join(skillsDir(), name);
-  if (!existsSync(dir)) return null;
+  const dir = skillDir(name);
+  if (!dir || !existsSync(dir)) return null;
   const candidates = ['prompt.md', 'SKILL.md', 'system-prompt.md', 'system.md'];
   for (const f of candidates) {
     const p = join(dir, f);
@@ -168,6 +184,9 @@ export async function installSkill(repoUrl: string, name?: string): Promise<{ ok
   if (repoUrl.includes('/search?')) {
     return { ok: false, error: 'This is a GitHub search URL, not a cloneable repo. Click "Browse on GitHub" to open it, then find a real repo to install.' };
   }
+  if (!isCloneableRepoUrl(repoUrl)) {
+    return { ok: false, error: 'Only https://github.com/<owner>/<repo> URLs can be installed.' };
+  }
   let skillName = name || repoUrl.split('/').pop()?.replace(/\.git$/, '') || 'unnamed';
   skillName = skillName.replace(/[^a-zA-Z0-9_-]/g, '-');
   const target = join(skillsDir(), skillName);
@@ -175,7 +194,7 @@ export async function installSkill(repoUrl: string, name?: string): Promise<{ ok
   mkdirSync(skillsDir(), { recursive: true });
 
   return new Promise((resolve) => {
-    const args = ['clone', '--depth', '1', repoUrl, target];
+    const args = ['-c', 'protocol.ext.allow=never', '-c', 'protocol.file.allow=never', 'clone', '--depth', '1', '--', repoUrl, target];
     const child = spawn('git', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let stderr = '';
     child.stderr?.on('data', (d) => (stderr += d.toString()));
@@ -188,7 +207,8 @@ export async function installSkill(repoUrl: string, name?: string): Promise<{ ok
 }
 
 export async function uninstallSkill(name: string): Promise<{ ok: boolean; error?: string }> {
-  const target = join(skillsDir(), name);
+  const target = skillDir(name);
+  if (!target) return { ok: false, error: 'Invalid skill name' };
   if (!existsSync(target)) return { ok: false, error: 'Not installed' };
   try {
     rmSync(target, { recursive: true, force: true });

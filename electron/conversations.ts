@@ -7,6 +7,9 @@ import { app } from 'electron';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 
+/** Conversation ids come from the renderer; only allow plain ids so they cannot escape the folder. */
+const validId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(id);
+
 const convosDir = () => join(app.getPath('userData'), 'conversations');
 
 export interface SavedConversation {
@@ -27,6 +30,7 @@ export function initConversations() {
 
 export function saveConversation(convo: SavedConversation): { ok: boolean; error?: string } {
   try {
+    if (!validId(convo?.id)) return { ok: false, error: 'Invalid conversation id' };
     mkdirSync(convosDir(), { recursive: true });
     const path = join(convosDir(), `${convo.id}.json`);
     writeFileSync(path, JSON.stringify(convo, null, 2), 'utf8');
@@ -37,6 +41,7 @@ export function saveConversation(convo: SavedConversation): { ok: boolean; error
 }
 
 export function loadConversation(id: string): SavedConversation | null {
+  if (!validId(id)) return null;
   try {
     const path = join(convosDir(), `${id}.json`);
     if (!existsSync(path)) return null;
@@ -65,6 +70,7 @@ export function listConversations(): SavedConversation[] {
 }
 
 export function deleteConversation(id: string): { ok: boolean; error?: string } {
+  if (!validId(id)) return { ok: false, error: 'Invalid conversation id' };
   try {
     const path = join(convosDir(), `${id}.json`);
     if (existsSync(path)) unlinkSync(path);
