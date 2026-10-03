@@ -18,8 +18,10 @@ export default function App() {
 
   // Bootstrap config on mount
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       const c = await window.claw.config.get();
+      if (cancelled) return;
       // Apply defaults
       const defaulted = {
         ...c,
@@ -32,13 +34,14 @@ export default function App() {
         // Tell the main process first; setWorkspace triggers a file-tree refresh that
         // needs the main process to already know the workspace.
         const r = await window.claw.workspace.set(c.workspace);
-        if (r.ok) setWorkspace(c.workspace);
+        if (!cancelled && r.ok) setWorkspace(c.workspace);
       }
       // First-run welcome if no API key and no endpoint customization
-      if (!c.hasApiKey && !c.endpoint) {
+      if (!cancelled && !c.hasApiKey && !c.endpoint) {
         useClaw.getState().setShowWelcome(true);
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   // Refresh files when workspace changes

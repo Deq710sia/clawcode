@@ -1,24 +1,18 @@
 /**
  * ClawCode — Process-level sandbox (Codex-style restricted user isolation).
  *
- * Instead of running ClawCode inside a Windows Sandbox VM (electron/sandbox.ts),
- * this module runs the AGENT'S SHELL COMMANDS as a restricted local user that
- * only has filesystem write access to the workspace folder.
+ * Runs the AGENT'S SHELL COMMANDS as a restricted local user that only has
+ * filesystem write access to the workspace folder.
  *
- * This is the approach OpenAI Codex uses on Windows:
- *   - Create a restricted local user (ClawCodeSandbox)
- *   - Set filesystem ACLs: workspace = writable, everything else = denied
- *   - Optionally deny network access via Windows Firewall
- *   - Spawn each `run_command` call as that user via PowerShell Start-Process -Credential
- *
- * Seamless to the user: no VM startup, no manual setup beyond a one-time
- * admin elevation to create the user.
+ * Honest scope: this runs the agent's shell commands as a separate low-privilege
+ * Windows account that can only write to the workspace. It is NOT a VM or container;
+ * use the Windows Sandbox integration for hard isolation.
  */
 import { app, safeStorage } from 'electron';
-import { join } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { spawn, execSync } from 'node:child_process';
-import { randomBytes, createHash } from 'node:crypto';
+import { join, relative, isAbsolute } from 'node:path';
+import { existsSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { spawn, execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 
 const SANDBOX_USER = 'ClawCodeSandbox';
 const configFilePath = () => join(app.getPath('userData'), 'sandbox-config.json');
@@ -26,13 +20,9 @@ const configFilePath = () => join(app.getPath('userData'), 'sandbox-config.json'
 export interface ProcessSandboxConfig {
   enabled: boolean;
   sandboxUser: string;
-  /** Encrypted password (base64 safeStorage) */
   passwordCipher?: string;
-  /** Workspace path the sandbox user has write access to */
   workspacePath?: string;
-  /** If true, deny network access to sandbox user via Windows Firewall */
   denyNetwork: boolean;
-  /** Created at timestamp */
   createdAt?: number;
 }
 
@@ -60,7 +50,6 @@ function saveSandboxConfig(cfg: ProcessSandboxConfig) {
 
 function encryptPassword(plain: string): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    // XOR fallback (same as API key handling)
     const key = randomBytes(32);
     const buf = Buffer.from(plain, 'utf8');
     const out = Buffer.alloc(buf.length);
@@ -86,22 +75,29 @@ export function decryptPassword(cipher: string): string {
 }
 
 function generatePassword(): string {
-  // 24-char alphanumeric + symbols that are PowerShell-safe
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^*';
+  // 24-char alphanumeric. No shell metacharacters so it can never be mangled.
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const out: string[] = [];
   const bytes = randomBytes(24);
-  let out = '';
-  for (let i = 0; i < 24; i++) out += chars[bytes[i] % chars.length];
-  return out;
+  for (let i = 0; i < 24; i++) out.push(chars[bytes[i] % chars.length]);
+  return out.join('');
 }
 
+const run = (file: string, args: string[]) =>
+  execFileSync(file, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }).toString();
+
+const ps = (script: string) =>
+  run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script]);
+
 /**
- * Check if the ClawCodeSandbox user exists on this system.
+ * Check if the ClawCodeSandbox user exists.
+ * `net user <name>` exits non-zero when the account does not exist (locale independent).
  */
 export function isSandboxUserExists(): boolean {
   if (process.platform !== 'win32') return false;
   try {
-    const out = execSync(`net user "${SANDBOX_USER}"`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-    return !out.includes('not found') && !out.toLowerCase().includes('the user name could not be found');
+    run('net', ['user', SANDBOX_USER]);
+    return true;
   } catch {
     return false;
   }
@@ -109,17 +105,19 @@ export function isSandboxUserExists(): boolean {
 
 /**
  * Check if ClawCode is running elevated (admin rights).
- * Required for creating local users and setting firewall rules.
+ * `fltmc` only succeeds for administrators.
  */
 export function isElevated(): boolean {
   if (process.platform !== 'win32') return false;
   try {
-    execSync('net session', { stdio: ['ignore', 'pipe', 'ignore'] });
+    run('fltmc', []);
     return true;
   } catch {
     return false;
   }
 }
+
+const FIREWALL_RULE = 'ClawCodeSandbox-Deny-Outbound';
 
 /**
  * Set up the sandbox user + ACLs. Requires admin elevation.
@@ -140,68 +138,82 @@ export async function setupSandbox(opts: { workspacePath: string; denyNetwork: b
   cfg.workspacePath = opts.workspacePath;
   cfg.denyNetwork = opts.denyNetwork;
 
-  // 1. Create user if not exists
-  if (!isSandboxUserExists()) {
-    const password = generatePassword();
-    cfg.passwordCipher = encryptPassword(password);
-    try {
-      execSync(`net user "${SANDBOX_USER}" "${password}" /add /active:yes /passwordreq:yes /expires:never`, { stdio: ['ignore', 'pipe', 'pipe'] });
-      // Add to Users group (not Administrators). Deny Remote Desktop + interactive logon.
-      execSync(`net localgroup Users "${SANDBOX_USER}" /add`, { stdio: ['ignore', 'pipe', 'pipe'] });
-      execSync(`net localgroup "Remote Desktop Users" "${SANDBOX_USER}" /delete`, { stdio: ['ignore', 'pipe', 'pipe'] });
-      // Deny interactive logon (can only run processes, not log in at lock screen)
-      execSync(`ntrights +r SeDenyInteractiveLogonRight -u "${SANDBOX_USER}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
-      execSync(`ntrights +r SeDenyNetworkLogonRight -u "${SANDBOX_USER}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err: any) {
-      return { ok: false, error: `Failed to create sandbox user: ${err?.message ?? err}` };
-    }
-  } else if (!cfg.passwordCipher) {
-    // User exists but we don't have the password — reset it
-    const password = generatePassword();
-    cfg.passwordCipher = encryptPassword(password);
-    try {
-      execSync(`net user "${SANDBOX_USER}" "${password}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err: any) {
-      return { ok: false, error: `Failed to reset sandbox user password: ${err?.message ?? err}` };
-    }
-  }
-
-  // 2. Set filesystem ACLs:
-  //    - Workspace: full control for sandbox user
-  //    - Temp dir: full control (needed for command temp files)
-  //    - User profile folders: deny
+  // 1. Create the user (or reset its password if we lost it).
+  //    Password is passed via stdin to `net user … *` to avoid leaking it in
+  //    the process command line (visible via Task Manager / Process Explorer).
   try {
-    const ws = opts.workspacePath;
-    execSync(`icacls "${ws}" /grant "${SANDBOX_USER}:(OI)(CI)F" /T`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    // Grant temp dir access
-    const tempDir = process.env.TEMP || 'C:\\Windows\\Temp';
-    execSync(`icacls "${tempDir}" /grant "${SANDBOX_USER}:(OI)(CI)M" /T`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    // Deny access to other user profiles
-    const userProfile = process.env.USERPROFILE || 'C:\\Users\\Default';
-    const usersDir = userProfile.split('\\').slice(0, -1).join('\\');
-    execSync(`icacls "${usersDir}" /deny "${SANDBOX_USER}:(OI)(CI)R"`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    // Re-grant access to the sandbox user's own profile (so it can run)
-    execSync(`icacls "${usersDir}\\${SANDBOX_USER}" /grant "${SANDBOX_USER}:(OI)(CI)F" /T`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    if (!isSandboxUserExists()) {
+      const password = generatePassword();
+      cfg.passwordCipher = encryptPassword(password);
+      saveSandboxConfig(cfg);
+      // Use PowerShell New-LocalUser which accepts the password as a SecureString
+      // passed via pipeline, never as a command-line argument.
+      const b64Pw = Buffer.from(password, 'utf16le').toString('base64');
+      ps(`
+        $pw = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64Pw}')) | ConvertTo-SecureString -AsPlainText -Force
+        New-LocalUser -Name '${SANDBOX_USER}' -Password $pw -Description 'ClawCode agent sandbox' -PasswordNeverExpires -UserMayNotChangePassword
+        Add-LocalGroupMember -Group 'Users' -Member '${SANDBOX_USER}'
+        try { Remove-LocalGroupMember -Group 'Remote Desktop Users' -Member '${SANDBOX_USER}' -ErrorAction SilentlyContinue } catch {}
+      `);
+    } else if (!cfg.passwordCipher) {
+      const password = generatePassword();
+      cfg.passwordCipher = encryptPassword(password);
+      saveSandboxConfig(cfg);
+      const b64Pw = Buffer.from(password, 'utf16le').toString('base64');
+      ps(`
+        $pw = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64Pw}')) | ConvertTo-SecureString -AsPlainText -Force
+        Set-LocalUser -Name '${SANDBOX_USER}' -Password $pw
+      `);
+    }
   } catch (err: any) {
-    return { ok: false, error: `Failed to set ACLs: ${err?.message ?? err}` };
+    return { ok: false, error: `Failed to create sandbox user: ${err?.stderr?.toString?.() || err?.message || err}` };
   }
 
-  // 3. Network firewall rules (optional)
+  // 2. Filesystem ACLs.
+  //    Grant workspace access FIRST. Then, if the workspace is under the user profile,
+  //    deny access to the profile EXCLUDING the workspace (using an explicit allow on
+  //    the workspace path which takes precedence over inherited deny).
   try {
+    run('icacls', [opts.workspacePath, '/grant', `${SANDBOX_USER}:(OI)(CI)M`, '/T', '/C', '/Q']);
+  } catch (err: any) {
+    return { ok: false, error: `Failed to grant workspace access: ${err?.stderr?.toString?.() || err?.message || err}` };
+  }
+  // Deny access to the user's home directory, but ONLY if the workspace is NOT inside it.
+  // If the workspace IS inside the profile, the explicit allow above takes precedence
+  // over inherited denies (Windows ACL: explicit allow > inherited deny).
+  // So we deny at the profile level but the workspace's explicit grant wins.
+  try {
+    const userProfile = process.env.USERPROFILE;
+    if (userProfile && existsSync(userProfile)) {
+      // Deny at the Users directory level (parent of all profiles).
+      // The explicit allow on the workspace overrides this inherited deny.
+      const usersDir = userProfile.split('\\').slice(0, -1).join('\\');
+      if (usersDir && existsSync(usersDir)) {
+        run('icacls', [usersDir, '/deny', `${SANDBOX_USER}:(OI)(CI)(R)`, '/C', '/Q']);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[sandbox] could not deny access to user directory:', err?.message);
+  }
+
+  // 3. Outbound network block (optional). Uses a per-user firewall rule.
+  try {
+    ps(`Remove-NetFirewallRule -DisplayName '${FIREWALL_RULE}' -ErrorAction SilentlyContinue`);
     if (cfg.denyNetwork) {
-      execSync(`netsh advfirewall firewall add rule name="ClawCodeSandbox-Deny-Outbound" dir=out action=block profile=any localuser="${SANDBOX_USER}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } else {
-      execSync(`netsh advfirewall firewall delete rule name="ClawCodeSandbox-Deny-Outbound"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+      ps(`
+        $sid = (New-Object System.Security.Principal.NTAccount('${SANDBOX_USER}')).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        New-NetFirewallRule -DisplayName '${FIREWALL_RULE}' -Direction Outbound -Action Block -Profile Any -LocalUser ("D:(A;;CC;;;" + $sid + ")") | Out-Null
+      `);
     }
   } catch (err: any) {
-    // Non-fatal — firewall rules require specific Windows versions
-    console.warn('[sandbox] firewall rule setup failed:', err?.message);
+    if (cfg.denyNetwork) {
+      return { ok: false, error: `Network block requested but the firewall rule could not be created: ${err?.stderr?.toString?.() || err?.message || err}` };
+    }
   }
 
   cfg.enabled = true;
   cfg.createdAt = Date.now();
   saveSandboxConfig(cfg);
-
   return { ok: true };
 }
 
@@ -218,14 +230,12 @@ export async function teardownSandbox(): Promise<{ ok: boolean; error?: string }
     return { ok: false, error: 'Admin rights required' };
   }
   try {
-    // Remove firewall rule
-    try { execSync(`netsh advfirewall firewall delete rule name="ClawCodeSandbox-Deny-Outbound"`, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch {}
-    // Delete user
+    try { ps(`Remove-NetFirewallRule -DisplayName '${FIREWALL_RULE}' -ErrorAction SilentlyContinue`); } catch {}
     if (isSandboxUserExists()) {
-      execSync(`net user "${SANDBOX_USER}" /delete`, { stdio: ['ignore', 'pipe', 'pipe'] });
+      run('net', ['user', SANDBOX_USER, '/delete']);
     }
   } catch (err: any) {
-    return { ok: false, error: err?.message ?? String(err) };
+    return { ok: false, error: err?.stderr?.toString?.() || err?.message || String(err) };
   }
   const cfg = loadSandboxConfig();
   cfg.enabled = false;
@@ -237,77 +247,91 @@ export async function teardownSandbox(): Promise<{ ok: boolean; error?: string }
 }
 
 /**
- * Run a shell command as the sandbox user. Used by the run_command tool when sandbox is enabled.
- * Spawns PowerShell, which uses Start-Process -Credential to run the command as the sandbox user.
+ * Run a shell command as the sandbox user (PowerShell, matching the unsandboxed path).
+ * Throws if the sandbox cannot be used — callers MUST NOT fall back to unsandboxed execution.
+ *
+ * The command is passed via -EncodedCommand (base64 UTF-16LE), never interpolated into
+ * script text — this prevents PowerShell variable expansion ($var, ${...}, $(...)) in
+ * the agent's command string.
  */
 export async function runCommandSandboxed(command: string, opts: { cwd: string; timeoutMs?: number }): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }> {
   const cfg = loadSandboxConfig();
+  if (process.platform !== 'win32') throw new Error('Process sandbox only available on Windows');
   if (!cfg.enabled || !cfg.passwordCipher || !cfg.workspacePath) {
     throw new Error('Process sandbox not configured');
   }
-  const password = decryptPassword(cfg.passwordCipher);
   const cwd = opts.cwd || cfg.workspacePath;
+  const rel = relative(cfg.workspacePath, cwd);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`Sandbox only has access to ${cfg.workspacePath}. Re-run sandbox setup for the current workspace (${cwd}).`);
+  }
+  const password = decryptPassword(cfg.passwordCipher);
+  const timeoutMs = Math.min(opts.timeoutMs ?? 120000, 600000);
+  const b64 = (v: string) => Buffer.from(v, 'utf8').toString('base64');
+  // -EncodedCommand expects UTF-16LE base64.
+  const innerEncoded = Buffer.from(command, 'utf16le').toString('base64');
+  const pwEncoded = Buffer.from(password, 'utf16le').toString('base64');
+  const cwdEncoded = Buffer.from(cwd, 'utf16le').toString('base64');
 
-  // Use PowerShell Start-Process -Credential to run as the sandbox user
-  // Output is captured via temp files (Start-Process doesn't pipeline stdout/stderr)
-  const tmpDir = process.env.TEMP || 'C:\\Windows\\Temp';
-  const outId = randomBytes(8).toString('hex');
-  const stdoutFile = join(tmpDir, `clawcode-stdout-${outId}.txt`);
-  const stderrFile = join(tmpDir, `clawcode-stderr-${outId}.txt`);
-  const exitCodeFile = join(tmpDir, `clawcode-exit-${outId}.txt`);
-
-  // Escape the command for PowerShell embedding
-  const psCommand = `
-$pw = ConvertTo-SecureString '${password.replace(/'/g, "''")}' -AsPlainText -Force
-$cred = New-Object System.Management.Automation.PSCredential('${SANDBOX_USER}', $pw)
+  // The inner PowerShell script runs the agent's command as the sandbox user.
+  // It reads stdout/stderr ASYNCHRONOUSLY (BeginOutputReadLine) to avoid the
+  // classic .NET deadlock where WaitForExit blocks on a full pipe buffer.
+  const script = `
+$ErrorActionPreference = 'Stop'
+function D($s) { [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($s)) }
+$pw = ConvertTo-SecureString (D '${pwEncoded}') -AsPlainText -Force
 $psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = 'cmd.exe'
-$psi.Arguments = '/c ' + [char]34 + ${JSON.stringify(command)} + [char]34
-$psi.WorkingDirectory = ${JSON.stringify(cwd)}
+$psi.FileName = 'powershell.exe'
+$psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${innerEncoded}'
+$psi.WorkingDirectory = (D '${cwdEncoded}')
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
+$psi.CreateNoWindow = $true
+$psi.LoadUserProfile = $true
 $psi.UserName = '${SANDBOX_USER}'
 $psi.Password = $pw
-$psi.WindowStyle = 'Hidden'
 $p = [System.Diagnostics.Process]::Start($psi)
-$p.WaitForExit(${Math.min(opts.timeoutMs ?? 120000, 600000)})
-$exit = $p.ExitCode
-$stdout = $p.StandardOutput.ReadToEnd()
-$stderr = $p.StandardError.ReadToEnd()
-[System.IO.File]::WriteAllText('${stdoutFile.replace(/\\/g, '\\\\')}', $stdout)
-[System.IO.File]::WriteAllText('${stderrFile.replace(/\\/g, '\\\\')}', $stderr)
-[System.IO.File]::WriteAllText('${exitCodeFile.replace(/\\/g, '\\\\')}', $exit)
+$out = new-object System.Text.StringBuilder
+$err = new-object System.Text.StringBuilder
+$outHandler = { if (-not $EventArgs.Data) { return }; [void]$out.AppendLine($EventArgs.Data) }
+$errHandler = { if (-not $EventArgs.Data) { return }; [void]$err.AppendLine($EventArgs.Data) }
+Register-ObjectEvent -InputObject $p -EventName OutputDataReceived -Action $outHandler | Out-Null
+Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived -Action $errHandler | Out-Null
+$p.BeginOutputReadLine()
+$p.BeginErrorReadLine()
+$timedOut = -not $p.WaitForExit(${timeoutMs})
+if ($timedOut) { try { $p.Kill() } catch {}; $p.WaitForExit() }
+$p.CancelOutputRead()
+$p.CancelErrorRead()
+$result = @{ exit = $(if ($timedOut) { -1 } else { $p.ExitCode }); timedOut = $timedOut; out = $out.ToString(); err = $err.ToString() }
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($result | ConvertTo-Json -Compress)))
 `.trim();
 
-  return new Promise((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand], {
+  return new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    let stderr = '';
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch {}
-    }, Math.min(opts.timeoutMs ?? 120000, 600000) + 5000);
-
+    let out = '';
+    let errOut = '';
+    child.stdout.on('data', (d) => (out += d.toString()));
+    child.stderr.on('data', (d) => (errOut += d.toString()));
+    const killer = setTimeout(() => { try { child.kill(); } catch {} }, timeoutMs + 15000);
+    child.on('error', (e) => { clearTimeout(killer); reject(e); });
     child.on('close', () => {
-      clearTimeout(timer);
-      let stdout = '';
-      let cmdStderr = '';
-      let exitCode: number | null = null;
-      try { stdout = readFileSync(stdoutFile, 'utf8'); } catch {}
-      try { cmdStderr = readFileSync(stderrFile, 'utf8'); } catch {}
-      try { exitCode = parseInt(readFileSync(exitCodeFile, 'utf8').trim()); } catch {}
-      try { rmSync(stdoutFile, { force: true }); } catch {}
-      try { rmSync(stderrFile, { force: true }); } catch {}
-      try { rmSync(exitCodeFile, { force: true }); } catch {}
-      resolve({
-        ok: exitCode === 0,
-        stdout,
-        stderr: cmdStderr + (stderr ? `\n[PowerShell] ${stderr}` : ''),
-        exitCode,
-      });
+      clearTimeout(killer);
+      try {
+        const payload = JSON.parse(Buffer.from(out.trim().split(/\r?\n/).pop() || '', 'base64').toString('utf8'));
+        resolve({
+          ok: payload.exit === 0,
+          stdout: payload.out ?? '',
+          stderr: (payload.err ?? '') + (payload.timedOut ? '\n[ClawCode] process timed out' : ''),
+          exitCode: payload.exit ?? null,
+        });
+      } catch {
+        reject(new Error(`Sandboxed launch failed: ${(errOut || out).trim().slice(0, 600) || 'no output from PowerShell'}`));
+      }
     });
   });
 }

@@ -52,7 +52,7 @@ export const PROVIDERS: ProviderPreset[] = [
     defaultModel: 'claude-3-5-sonnet-20241022',
     models: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
     docsUrl: 'https://console.anthropic.com/settings/keys',
-    note: 'Direct Anthropic API. ClawCode uses OpenAI-compatible mode.',
+    note: 'Direct Anthropic API. NOTE: Anthropic uses /v1/messages, not /v1/chat/completions. ClawCode calls /chat/completions, so this preset only works if Anthropic adds OpenAI-compat mode. Use OpenRouter for Claude models instead.',
   },
   {
     id: 'zai-glm',

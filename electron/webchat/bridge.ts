@@ -7,33 +7,36 @@
  * Visible-first login: when no logged-in profile exists, launches headful.
  * After successful login, subsequent launches are headless.
  */
-import { app, BrowserWindow } from 'electron';
+import { app } from 'electron';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { initProfiles, getProfile, getAllProfiles, setLoggedIn, getProfileDir, resetProfile, WebChatId } from './profiles.js';
-import { BaseDriver, SendMessageOpts } from './drivers/base.js';
+import { BaseDriver } from './drivers/base.js';
 import { ClaudeDriver } from './drivers/claude.js';
 import { ChatGPTDriver } from './drivers/chatgpt.js';
 import { GeminiDriver } from './drivers/gemini.js';
 import { GrokDriver } from './drivers/grok.js';
 import { DeepSeekDriver } from './drivers/deepseek.js';
 
-// Dynamic import for ESM-only playwright-extra
+// Dynamic import for ESM-only playwright-extra.
+// Singleton promise prevents concurrent init races (double `chromium.use(stealth())`).
 let chromium: any = null;
-let stealth: any = null;
+let pwPromise: Promise<void> | null = null;
 
-async function ensurePlaywright() {
-  if (chromium) return;
-  // playwright-extra is ESM; dynamic import works in ESM main
-  const pwExtra = await import('playwright-extra');
-  chromium = pwExtra.chromium;
-  try {
-    const puppeteerStealth = await import('puppeteer-extra-plugin-stealth');
-    stealth = puppeteerStealth.default;
-    chromium.use(stealth());
-  } catch (err) {
-    console.warn('[webchat] stealth plugin unavailable, falling back to vanilla playwright:', err);
-  }
+function ensurePlaywright(): Promise<void> {
+  if (pwPromise) return pwPromise;
+  pwPromise = (async () => {
+    const pwExtra = await import('playwright-extra');
+    chromium = pwExtra.chromium;
+    try {
+      const puppeteerStealth = await import('puppeteer-extra-plugin-stealth');
+      const stealth = puppeteerStealth.default;
+      chromium.use(stealth());
+    } catch (err) {
+      console.warn('[webchat] stealth plugin unavailable, falling back to vanilla playwright:', err);
+    }
+  })();
+  return pwPromise;
 }
 
 const DRIVERS: Record<WebChatId, () => BaseDriver> = {
@@ -53,40 +56,54 @@ interface ActiveSession {
 
 const sessions: Partial<Record<WebChatId, ActiveSession>> = {};
 
+/** Set CLAWCODE_WEBCHAT_HEADFUL=1 to keep a visible browser window (more reliable against bot checks). */
+const FORCE_HEADFUL = process.env.CLAWCODE_WEBCHAT_HEADFUL === '1';
+
 async function launchSession(id: WebChatId, headless: boolean): Promise<ActiveSession> {
   await ensurePlaywright();
   const profile = getProfile(id);
   const driver = DRIVERS[id]();
   const userDataDir = getProfileDir(id);
 
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless,
-    viewport: { width: 1280, height: 900 },
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-features=Translate',
-      '--lang=en-US,en',
-    ],
-  });
-
-  // Block heavy resources for speed (images still allowed for login captcha)
-  await context.route('**/*.{png,jpg,jpeg,gif,webp,svg,woff,woff2}', (route: any) => {
-    const url = route.request().url();
-    // Allow images on auth pages (captcha)
-    if (url.includes('accounts.google.com') || url.includes('auth') || url.includes('login') || url.includes('recaptcha')) {
-      route.continue();
-    } else {
-      route.abort();
+  let context: any;
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: headless && !FORCE_HEADFUL,
+      viewport: { width: 1280, height: 900 },
+      // No userAgent override: a hard-coded UA that disagrees with the real browser
+      // version / OS (and its client-hint headers) is a classic bot-detection signal.
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-features=Translate',
+        '--lang=en-US,en',
+      ],
+    });
+  } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    if (/Executable doesn't exist|browserType\.launch|playwright install/i.test(msg)) {
+      throw new Error(
+        'The Chromium browser used by the WebChat bridge is not installed. ' +
+        'Run `npx playwright install chromium` (dev) or reinstall ClawCode. Details: ' + msg.split('\n')[0]
+      );
     }
-  });
+    throw err;
+  }
+
+  // Headless only: skip heavy assets for speed. Never in the visible login window,
+  // where the user may need to solve a captcha or upload an image.
+  if (headless && !FORCE_HEADFUL) {
+    await context.route('**/*.{png,jpg,jpeg,gif,webp,woff,woff2}', (route: any) => {
+      const url = route.request().url();
+      if (/accounts\.google\.com|recaptcha|turnstile|challenges\.cloudflare|\/auth|\/login/.test(url)) route.continue();
+      else route.abort();
+    });
+  }
 
   const page = context.pages()[0] ?? (await context.newPage());
   await page.goto(driver.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  await page.waitForTimeout(2000);
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
 
   return { driver, context, page, busy: false };
 }
@@ -112,16 +129,23 @@ export async function login(id: WebChatId): Promise<{ ok: boolean; loggedIn: boo
     // Poll for login success for up to 5 minutes (user needs time to log in)
     const start = Date.now();
     while (Date.now() - start < 5 * 60 * 1000) {
+      if (session.page.isClosed()) {
+        await closeSession(id);
+        return { ok: false, loggedIn: false, error: 'Login window was closed before login completed' };
+      }
       const loggedIn = await session.driver.isLoggedIn(session.page).catch(() => false);
       if (loggedIn) {
         setLoggedIn(id, true);
-        // Keep the session open for queries; switch to headless on next query
+        // Cookies are persisted in the profile dir. Reopen headless for actual queries.
+        await goHeadless(id).catch(() => {});
         return { ok: true, loggedIn: true };
       }
       await new Promise((r) => setTimeout(r, 2000));
     }
+    await closeSession(id);
     return { ok: false, loggedIn: false, error: 'Login timed out (5 min)' };
   } catch (err: any) {
+    await closeSession(id);
     return { ok: false, loggedIn: false, error: err?.message ?? String(err) };
   }
 }
@@ -141,48 +165,56 @@ export interface QueryOpts {
   signal?: AbortSignal;
 }
 
-/** Send a message to the web chat and stream the response. */
+/** Send a message to the web chat and stream the response. Resolves when the reply is complete. */
 export async function query(id: WebChatId, opts: QueryOpts): Promise<void> {
+  let session: ActiveSession | undefined;
+  let settled = false;
+  const fail = (err: Error) => { if (!settled) { settled = true; opts.onError(err); } };
+  const finish = (full: string) => { if (!settled) { settled = true; opts.onDone(full); } };
+
   try {
-    const profile = getProfile(id);
-    if (!profile.loggedIn) {
-      // Auto-launch headful login if never logged in
+    if (!getProfile(id).loggedIn) {
+      // Never logged in: open the visible login window and wait.
       const result = await login(id);
       if (!result.loggedIn) {
-        opts.onError(new Error(`Not logged in to ${id}: ${result.error ?? 'login required'}`));
-        return;
+        return fail(new Error(`Not logged in to ${id}: ${result.error ?? 'login required'}`));
       }
     }
 
-    let session = sessions[id];
+    session = sessions[id];
     if (!session) {
-      // Reuse profile, launch headless
       session = await launchSession(id, true);
       sessions[id] = session;
     }
-
-    if (session.busy) {
-      opts.onError(new Error(`${id} session is busy with another query`));
-      return;
-    }
+    if (session.busy) return fail(new Error(`${id} session is busy with another query`));
     session.busy = true;
 
+    // Every request starts a fresh conversation. The bridge is stateless like any
+    // OpenAI-compatible API: the caller sends the full history each time.
+    await session.page.goto(session.driver.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await session.page.waitForTimeout(1200);
+    if (!(await session.driver.isLoggedIn(session.page).catch(() => false))) {
+      setLoggedIn(id, false);
+      session.busy = false;
+      return fail(new Error(`Your ${id} session is not logged in (expired, or a bot-check page is showing). Log in again from Settings → Web Chats.`));
+    }
     await session.driver.prepare(session.page);
-    await session.driver.sendMessage(session.page, {
-      text: opts.text,
-      onDelta: opts.onDelta,
-      onDone: (full) => {
-        session.busy = false;
-        opts.onDone(full);
-      },
-      onError: (err) => {
-        session.busy = false;
-        opts.onError(err);
-      },
-      signal: opts.signal,
+
+    const active = session;
+    await new Promise<void>((resolve) => {
+      active.driver.sendMessage(active.page, {
+        text: opts.text,
+        onDelta: (d) => { if (!settled) opts.onDelta(d); },
+        onDone: (full) => { finish(full); resolve(); },
+        onError: (err) => { fail(err); resolve(); },
+        signal: opts.signal,
+      }).catch((err) => { fail(err); resolve(); });
     });
+    setLoggedIn(id, true);
   } catch (err: any) {
-    opts.onError(err);
+    fail(err instanceof Error ? err : new Error(String(err)));
+  } finally {
+    if (session) session.busy = false;
   }
 }
 

@@ -50,8 +50,12 @@ export abstract class BaseDriver {
       if (sel.sendButton) {
         const btn = await visibleHandle(page, sel.sendButton);
         if (btn && (await btn.isEnabled().catch(() => true))) {
-          await btn.click().catch(() => {});
-          sent = true;
+          try {
+            await btn.click();
+            sent = true;
+          } catch {
+            // Click failed (detached element, intercept) — fall through to Enter.
+          }
         }
       }
       if (!sent) await page.keyboard.press('Enter');

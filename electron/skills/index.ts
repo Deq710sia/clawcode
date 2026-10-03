@@ -164,7 +164,7 @@ function loadManifest(skillPath: string): SkillManifest | null {
         };
       }
       if (f === 'SKILL.md' || f.endsWith('.md')) {
-        const fm = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+        const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
         if (fm) {
           const meta: any = {};
           for (const line of fm[1].split('\n')) {

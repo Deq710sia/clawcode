@@ -77,7 +77,7 @@ export function generateWsb(config: SandboxConfig): string {
   if (config.persistUserData && existsSync(hostUserData)) {
     mappings.push(`    <MappedFolder>
       <HostFolder>${escapeXml(hostUserData)}</HostFolder>
-      <SandboxFolder>C:\\Users\\WDAGUtilityAccount\\AppData\\Roaming\\ClawCode</SandboxFolder>
+      <SandboxFolder>C:\\Users\\WDAGUtilityAccount\\AppData\\Roaming\\${app.getName()}</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>`);
   }
@@ -131,12 +131,17 @@ export function isSandboxAvailable(): boolean {
  * Launch the sandbox by opening the .wsb file (Windows associates .wsb with WindowsSandbox.exe).
  */
 export function launchSandbox(config: SandboxConfig): { ok: boolean; error?: string; wsbPath?: string } {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Windows Sandbox only available on Windows 10/11 Pro+' };
+  }
   try {
     const wsbPath = writeWsbFile(config);
-    if (process.platform !== 'win32') {
-      return { ok: false, error: 'Windows Sandbox only available on Windows 10/11 Pro+', wsbPath };
+    // Use spawn with arg array to avoid command injection via wsbPath.
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync('cmd.exe', ['/c', 'start', '', wsbPath], { windowsHide: true });
+    if (result.status !== 0) {
+      return { ok: false, error: `Failed to launch Windows Sandbox (exit ${result.status}): ${result.stderr?.toString().slice(0, 300)}`, wsbPath };
     }
-    exec(`start "" "${wsbPath}"`);
     return { ok: true, wsbPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };

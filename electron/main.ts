@@ -5,14 +5,14 @@
  */
 import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, net } from 'electron';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve as pathResolve, relative, normalize, isAbsolute } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync, renameSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { randomBytes, createHash } from 'node:crypto';
 
 import { registerTools, handleToolCall } from './tools/index.js';
 import { initBridge, getAllProfiles, login as webchatLogin, closeAllSessions, resetWebChat, getBridgeStatus, type WebChatId } from './webchat/bridge.js';
 import { startBridgeServer, stopBridgeServer, BRIDGE_PORT, BRIDGE_TOKEN, BRIDGE_TOKEN_HEADER } from './webchat/server.js';
-import { probeOpenCode, startOpenCode, stopOpenCode, getOpenCodeStatus, proxyToOpenCode } from './opencode.js';
+import { probeOpenCode, startOpenCode, stopOpenCode, getOpenCodeStatus } from './opencode.js';
 import { PROVIDERS } from './providers/index.js';
 import * as Skills from './skills/index.js';
 import * as HF from './huggingface.js';
@@ -37,7 +37,6 @@ const userDataDir = app.getPath('userData');
 const configFile = join(userDataDir, 'clawcode.config.json');
 
 process.env.APP_ROOT = isDev ? __dirname : dirname(app.getPath('exe'));
-const MAIN_DIST = join(__dirname, '../dist-electron');
 const RENDERER_DIST = join(__dirname, '../dist');
 
 // ---------------------------------------------------------------------------
@@ -188,10 +187,21 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('before-quit', async () => {
-  await closeAllSessions();
-  stopBridgeServer();
-  await stopOpenCode();
+let isQuitting = false;
+app.on('before-quit', (e) => {
+  if (isQuitting) return;
+  e.preventDefault();
+  isQuitting = true;
+  (async () => {
+    try {
+      await closeAllSessions();
+      stopBridgeServer();
+      await stopOpenCode();
+    } catch (err) {
+      console.error('[clawcode] cleanup error:', err);
+    }
+    app.exit(0);
+  })();
 });
 
 app.on('window-all-closed', () => {
@@ -284,7 +294,9 @@ function registerIpc() {
 
   ipcMain.handle('config:set', (_e, patch: Partial<Config>) => {
     const cfg = loadConfig();
-    const next: Config = { ...cfg, ...patch };
+    // Whitelist allowed fields — never let the renderer write apiKeyCipher or
+    // apiKeyCheck directly (that would bypass encryption). Use config:setApiKey.
+    const next: Config = { ...cfg };
     if (patch.endpoint !== undefined) next.endpoint = patch.endpoint;
     if (patch.model !== undefined) next.model = patch.model;
     if (patch.systemPrompt !== undefined) next.systemPrompt = patch.systemPrompt;

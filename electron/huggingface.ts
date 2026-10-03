@@ -164,10 +164,12 @@ async function tryHuggingfaceCli(
   onProgress?: (p: DownloadProgress) => void
 ): Promise<{ ok: boolean; partialOk?: boolean; error?: string; path?: string }> {
   return new Promise((resolve) => {
+    // On Windows, huggingface-cli is a .cmd wrapper — spawn without shell:true to
+    // avoid shell injection via modelId. Node resolves .cmd automatically.
     const child = spawn('huggingface-cli', ['download', modelId, '--local-dir', target], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      shell: true,
+      shell: false,
     });
     let stderr = '';
     let lastStdout = '';
@@ -181,7 +183,8 @@ async function tryHuggingfaceCli(
     });
     child.stderr?.on('data', (d) => (stderr += d.toString()));
     child.on('error', () => {
-      // huggingface-cli not installed — fall through to git lfs
+      // huggingface-cli not installed — clean up empty target dir, fall through to git lfs
+      try { rmSync(target, { recursive: true, force: true }); } catch {}
       resolve({ ok: false });
     });
     child.on('close', (code) => {
@@ -191,6 +194,8 @@ async function tryHuggingfaceCli(
         onProgress?.({ modelId, phase: 'done', path: target });
         resolve({ ok: true, path: target });
       } else {
+        // Clean up the empty/partial target dir so the next attempt isn't blocked
+        try { rmSync(target, { recursive: true, force: true }); } catch {}
         resolve({ ok: false, error: `huggingface-cli exited ${code}: ${stderr.slice(0, 300)}` });
       }
     });

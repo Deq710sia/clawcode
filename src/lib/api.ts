@@ -355,55 +355,60 @@ export async function streamChat(opts: StreamChatOpts) {
     hadToolCalls = true;
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
 
-    const lines = buf.split('\n');
-    buf = lines.pop() ?? '';
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
 
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line) continue;
-      if (!line.startsWith('data:')) continue;
-      const data = line.slice(5).trim();
-      if (data === '[DONE]') {
-        flushToolCalls();
-        opts.onEvent({ type: 'done' });
-        return;
-      }
-      try {
-        const json = JSON.parse(data);
-        const choice = json.choices?.[0];
-        if (!choice) continue;
-        const delta = choice.delta ?? {};
-        if (typeof delta.content === 'string' && delta.content) {
-          opts.onEvent({ type: 'delta', text: delta.content });
-        }
-        if (Array.isArray(delta.tool_calls)) {
-          for (const tc of delta.tool_calls) {
-            const idx: number = tc.index ?? 0;
-            if (!toolCallBuffers.has(idx)) {
-              toolCallBuffers.set(idx, { id: tc.id ?? `call_${idx}_${Date.now()}`, name: '', argsStr: '' });
-            }
-            const b = toolCallBuffers.get(idx)!;
-            if (tc.id) b.id = tc.id;
-            if (tc.function?.name) b.name += tc.function.name;
-            if (tc.function?.arguments) b.argsStr += tc.function.arguments;
-          }
-        }
-        if (choice.finish_reason === 'tool_calls') {
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') {
           flushToolCalls();
+          opts.onEvent({ type: 'done' });
+          return;
         }
-      } catch {
-        // ignore parse errors on partial lines
+        try {
+          const json = JSON.parse(data);
+          const choice = json.choices?.[0];
+          if (!choice) continue;
+          const delta = choice.delta ?? {};
+          if (typeof delta.content === 'string' && delta.content) {
+            opts.onEvent({ type: 'delta', text: delta.content });
+          }
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx: number = tc.index ?? 0;
+              if (!toolCallBuffers.has(idx)) {
+                toolCallBuffers.set(idx, { id: tc.id ?? `call_${idx}_${Date.now()}`, name: '', argsStr: '' });
+              }
+              const b = toolCallBuffers.get(idx)!;
+              if (tc.id) b.id = tc.id;
+              if (tc.function?.name) b.name += tc.function.name;
+              if (tc.function?.arguments) b.argsStr += tc.function.arguments;
+            }
+          }
+          if (choice.finish_reason === 'tool_calls') {
+            flushToolCalls();
+          }
+        } catch {
+          // ignore parse errors on partial lines
+        }
       }
     }
-  }
 
-  flushToolCalls();
-  opts.onEvent({ type: 'done' });
+    flushToolCalls();
+    opts.onEvent({ type: 'done' });
+  } finally {
+    // Release the reader so the underlying stream can be garbage-collected.
+    reader.releaseLock();
+  }
 }
 
 export { DEFAULT_SYSTEM_PROMPT };

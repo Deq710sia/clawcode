@@ -9,26 +9,27 @@
 type Controller = ReadableStreamDefaultController<Uint8Array>;
 
 const streams = new Map<string, Controller>();
-let listening = false;
+let unsubscribers: Array<() => void> = [];
 
 function ensureListeners() {
-  if (listening) return;
-  listening = true;
-  window.claw.net.onChunk((id, chunk) => {
-    try { streams.get(id)?.enqueue(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as any)); } catch {}
-  });
-  window.claw.net.onEnd((id) => {
-    const c = streams.get(id);
-    streams.delete(id);
-    try { c?.close(); } catch {}
-  });
-  window.claw.net.onError((id, message) => {
-    const c = streams.get(id);
-    streams.delete(id);
-    try {
-      c?.error(message === 'aborted' ? new DOMException('Aborted', 'AbortError') : new Error(message));
-    } catch {}
-  });
+  if (unsubscribers.length > 0) return;
+  unsubscribers = [
+    window.claw.net.onChunk((id, chunk) => {
+      try { streams.get(id)?.enqueue(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as any)); } catch {}
+    }),
+    window.claw.net.onEnd((id) => {
+      const c = streams.get(id);
+      streams.delete(id);
+      try { c?.close(); } catch {}
+    }),
+    window.claw.net.onError((id, message) => {
+      const c = streams.get(id);
+      streams.delete(id);
+      try {
+        c?.error(message === 'aborted' ? new DOMException('Aborted', 'AbortError') : new Error(message));
+      } catch {}
+    }),
+  ];
 }
 
 function newId(): string {

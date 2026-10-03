@@ -455,11 +455,13 @@ function makeUnifiedDiff(path: string, a: string, b: string): string {
   }
 
   let i = 0, j = 0;
-  let aStart = -1, bStart = -1, count = 0;
+  let aStart = -1, bStart = -1;
+  let aCount = 0, bCount = 0; // separate counts for old-side and new-side
   const emit = (aIdx: number, bIdx: number, marker: ' ' | '-' | '+', text: string) => {
     if (aStart === -1) { aStart = aIdx; bStart = bIdx; }
     lines.push(`${marker}${text}`);
-    count++;
+    if (marker !== '+') aCount++;
+    if (marker !== '-') bCount++;
   };
 
   while (i < n && j < m) {
@@ -477,9 +479,10 @@ function makeUnifiedDiff(path: string, a: string, b: string): string {
   while (i < n) { emit(i + 1, j, '-', aLines[i]); i++; }
   while (j < m) { emit(i, j + 1, '+', bLines[j]); j++; }
 
-  // Insert hunk header at the top (after the +++ line)
+  // Insert hunk header at the top (after the +++ line).
+  // Unified diff counts: old-side = deletions + context; new-side = additions + context.
   if (aStart >= 0) {
-    lines.splice(2, 0, `@@ -${aStart},${count} +${bStart},${count} @@`);
+    lines.splice(2, 0, `@@ -${aStart},${aCount} +${bStart},${bCount} @@`);
   }
   return lines.join('\n');
 }

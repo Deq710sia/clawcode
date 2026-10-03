@@ -341,13 +341,20 @@ export const useClaw = create<ClawState>((set, get) => ({
       // with the tool results now in history.
     }
 
-    // Hit the round limit
-    set((s) => ({
-      isStreaming: false,
-      messages: s.messages.some((m) => m.streaming)
-        ? s.messages.map((m) => (m.streaming ? { ...m, streaming: false, content: m.content + '\n\n[reached max tool rounds]' } : m))
-        : s.messages,
-    }));
+    // Hit the round limit — append a visible notice so the user knows why it stopped.
+    set((s) => {
+      const messages = s.messages.some((m) => m.streaming)
+        ? s.messages.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+        : s.messages;
+      // Always append the notice (the streaming flag may have been cleared by the
+      // 'done' event before we got here, so the branch above is unreliable).
+      const lastMsg = messages[messages.length - 1];
+      const notice = '\n\n[reached max tool rounds — increase MAX_TOOL_ROUNDS or continue manually]';
+      const finalMessages = lastMsg && lastMsg.role === 'assistant'
+        ? [...messages.slice(0, -1), { ...lastMsg, content: (lastMsg.content || '') + notice }]
+        : [...messages, { id: uuid(), role: 'assistant' as const, content: notice, createdAt: Date.now() }];
+      return { isStreaming: false, messages: finalMessages };
+    });
   },
 
   stopStreaming: () => {

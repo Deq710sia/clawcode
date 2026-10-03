@@ -49,7 +49,7 @@ function streamableLength(full: string): number {
   let cut = full.length;
   if (fence !== -1) cut = Math.min(cut, fence);
   if (brace !== -1) cut = Math.min(cut, brace);
-  while (cut > 0 && full[cut - 1] === '`' && cut === full.length) cut--;
+  while (cut > 0 && full[cut - 1] === '`') cut--;
   if (cut < full.length) cut = full.slice(0, cut).trimEnd().length;
   return cut;
 }

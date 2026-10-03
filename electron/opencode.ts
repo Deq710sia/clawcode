@@ -106,6 +106,11 @@ export async function startOpenCode(opts: OpenCodeOpts): Promise<OpenCodeStatus>
   ocProcess.stderr?.on('data', (d) => {
     try { appendFileSync(logFile, d.toString()); } catch {}
   });
+  ocProcess.on('error', (err) => {
+    // spawn() failed (ENOENT, EPERM, etc.) — clear ocProcess so restart works.
+    ocStatus = { ...probe, running: false, lastError: err?.message ?? String(err) };
+    ocProcess = null;
+  });
   ocProcess.on('exit', (code) => {
     ocStatus = { ...probe, running: false, lastError: code !== 0 ? `exited with code ${code}` : undefined };
     ocProcess = null;
