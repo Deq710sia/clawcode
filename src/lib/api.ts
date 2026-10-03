@@ -24,11 +24,58 @@ export interface ApiMessage {
 }
 
 export interface ChatStreamEvent {
-  type: 'delta' | 'tool_calls' | 'done' | 'error' | 'plan';
+  type: 'delta' | 'reasoning' | 'tool_calls' | 'done' | 'error' | 'plan';
   text?: string;
   calls?: { id: string; name: string; args: Record<string, any> }[];
   message?: string;
   plan?: string;
+}
+
+
+/**
+ * Splits streamed content into visible text and <think>…</think> reasoning.
+ * Tags may be split across chunks, so a possible partial tag is held back until the next chunk.
+ */
+export function createThinkSplitter() {
+  let inThink = false;
+  let hold = '';
+  const OPEN = '<think>';
+  const CLOSE = '</think>';
+  const partialAtEnd = (text: string, tag: string) => {
+    for (let n = Math.min(tag.length - 1, text.length); n > 0; n--) {
+      if (tag.startsWith(text.slice(-n))) return n;
+    }
+    return 0;
+  };
+  return {
+    push(chunk: string): { text: string; reasoning: string } {
+      let buf = hold + chunk;
+      hold = '';
+      let text = '';
+      let reasoning = '';
+      while (buf) {
+        const tag = inThink ? CLOSE : OPEN;
+        const i = buf.indexOf(tag);
+        if (i === -1) {
+          const keep = partialAtEnd(buf, tag);
+          const emit = buf.slice(0, buf.length - keep);
+          if (inThink) reasoning += emit; else text += emit;
+          hold = buf.slice(buf.length - keep);
+          break;
+        }
+        const before = buf.slice(0, i);
+        if (inThink) reasoning += before; else text += before;
+        buf = buf.slice(i + tag.length);
+        inThink = !inThink;
+      }
+      return { text, reasoning };
+    },
+    flush(): { text: string; reasoning: string } {
+      const out = inThink ? { text: '', reasoning: hold } : { text: hold, reasoning: '' };
+      hold = '';
+      return out;
+    },
+  };
 }
 
 export interface StreamChatOpts {
@@ -344,6 +391,12 @@ export async function streamChat(opts: StreamChatOpts) {
   let buf = '';
   const toolCallBuffers: Map<number, { id: string; name: string; argsStr: string }> = new Map();
   let hadToolCalls = false;
+  const thinkSplitter = createThinkSplitter();
+  const flushThink = () => {
+    const rest = thinkSplitter.flush();
+    if (rest.reasoning) opts.onEvent({ type: 'reasoning', text: rest.reasoning });
+    if (rest.text) opts.onEvent({ type: 'delta', text: rest.text });
+  };
 
   const flushToolCalls = () => {
     if (toolCallBuffers.size === 0) return;
@@ -377,6 +430,7 @@ export async function streamChat(opts: StreamChatOpts) {
         if (!line.startsWith('data:')) continue;
         const data = line.slice(5).trim();
         if (data === '[DONE]') {
+          flushThink();
           flushToolCalls();
           opts.onEvent({ type: 'done' });
           return;
@@ -386,8 +440,15 @@ export async function streamChat(opts: StreamChatOpts) {
           const choice = json.choices?.[0];
           if (!choice) continue;
           const delta = choice.delta ?? {};
+          // DeepSeek/GLM/Qwen send `reasoning_content`; OpenRouter sends `reasoning`.
+          const rs = delta.reasoning_content ?? delta.reasoning;
+          if (typeof rs === 'string' && rs) {
+            opts.onEvent({ type: 'reasoning', text: rs });
+          }
           if (typeof delta.content === 'string' && delta.content) {
-            opts.onEvent({ type: 'delta', text: delta.content });
+            const parts = thinkSplitter.push(delta.content);
+            if (parts.reasoning) opts.onEvent({ type: 'reasoning', text: parts.reasoning });
+            if (parts.text) opts.onEvent({ type: 'delta', text: parts.text });
           }
           if (Array.isArray(delta.tool_calls)) {
             for (const tc of delta.tool_calls) {
@@ -410,6 +471,7 @@ export async function streamChat(opts: StreamChatOpts) {
       }
     }
 
+    flushThink();
     flushToolCalls();
     opts.onEvent({ type: 'done' });
   } finally {

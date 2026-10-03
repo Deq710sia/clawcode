@@ -7,6 +7,8 @@ export interface ChatMessage {
   name?: string;
   createdAt: number;
   streaming?: boolean;
+  /** Model's reasoning/thinking text (display only; never sent back to the API). */
+  reasoning?: string;
 }
 
 export interface ToolCall {

@@ -15,8 +15,26 @@ import {
   ListChecks,
   Copy,
   Check,
+  Brain,
 } from 'lucide-react';
 import type { ChatMessage, ToolCall } from '../types';
+
+
+/** Collapsible reasoning block. Open while streaming with no answer yet, collapsed once the answer starts. */
+function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const [userToggled, setUserToggled] = useState<boolean | null>(null);
+  const open = userToggled ?? live;
+  return (
+    <div className="thinking-block">
+      <button className="thinking-toggle" onClick={() => setUserToggled(!open)} aria-expanded={open}>
+        <ChevronRight size={11} className={open ? 'rot90' : ''} />
+        <Brain size={11} />
+        {live ? 'Thinking…' : 'Thought process'}
+      </button>
+      {open && <div className="thinking-body">{text}</div>}
+    </div>
+  );
+}
 
 /** Copy button for code blocks — appears on hover. */
 function CodeBlockCopyButton({ code }: { code: string }) {
@@ -200,6 +218,7 @@ export default function Message({ msg }: { msg: ChatMessage }) {
         <div className="message-role">
           {msg.role === 'assistant' ? 'ClawCode' : msg.role === 'user' ? 'You' : msg.role}
         </div>
+        {msg.reasoning && <ThinkingBlock text={msg.reasoning} live={!!msg.streaming && !msg.content} />}
         {msg.content && (
           <div className="message-content">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: PreWithCopy }}>{msg.content}</ReactMarkdown>

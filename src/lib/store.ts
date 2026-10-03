@@ -193,6 +193,12 @@ export const useClaw = create<ClawState>((set, get) => ({
               m.id === assistantMsg.id ? { ...m, content: m.content + ev.text } : m
             ),
           }));
+        } else if (ev.type === 'reasoning' && ev.text) {
+          set((s) => ({
+            messages: s.messages.map((m) =>
+              m.id === assistantMsg.id ? { ...m, reasoning: (m.reasoning ?? '') + ev.text } : m
+            ),
+          }));
         } else if (ev.type === 'tool_calls' && ev.calls) {
           hadToolCalls = true;
           const calls: ToolCall[] = ev.calls.map((c) => ({
