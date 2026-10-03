@@ -1,6 +1,6 @@
 {
   "name": "clawcode",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "ClawCode — universal agentic harness (Electron + OpenCode + WebChat Bridge)",
   "author": "ClawCode",
   "license": "MIT",
@@ -15,8 +15,7 @@
     "dist": "npm run build && electron-builder --win --x64",
     "dist:portable": "npm run build && electron-builder --win portable --x64",
     "dist:nsis": "npm run build && electron-builder --win nsis --x64",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json",
-    "postinstall": "cross-env PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -69,13 +68,6 @@
       "dist-electron/**/*",
       "build/**/*",
       "!node_modules/playwright-core/.local-browsers{,/**}"
-    ],
-    "extraResources": [
-      {
-        "from": "node_modules/playwright-core/.local-browsers",
-        "to": "browsers",
-        "filter": ["**/*"]
-      }
     ],
     "win": {
       "icon": "build/icon.ico",

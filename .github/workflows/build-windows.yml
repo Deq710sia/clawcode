@@ -24,9 +24,6 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
-
       - name: Build renderer + main
         run: npm run build
 

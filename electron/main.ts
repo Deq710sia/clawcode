@@ -26,13 +26,6 @@ const __dirname = dirname(__filename);
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
-// Where Playwright looks for Chromium. Packaged: the copy bundled in resources/browsers
-// (see build.extraResources). Dev: "0" = node_modules/playwright-core/.local-browsers,
-// which is where `postinstall` downloads it. Must be set before playwright is first imported.
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = app.isPackaged ? join(process.resourcesPath, 'browsers') : '0';
-}
-
 const userDataDir = app.getPath('userData');
 const configFile = join(userDataDir, 'clawcode.config.json');
 
@@ -83,9 +76,10 @@ function createWindow() {
     },
   });
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-  });
+  // Show window immediately — if we wait for 'ready-to-show' and the renderer
+  // fails to load (missing dist/index.html, CSP issue, etc.), the window never
+  // appears and the user sees a silent background process.
+  mainWindow.show();
 
   if (isDev) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL!);
@@ -93,6 +87,13 @@ function createWindow() {
   } else {
     mainWindow.loadFile(join(RENDERER_DIST, 'index.html'));
   }
+
+  // If the page fails to load, show an error instead of a blank window
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription) => {
+    if (errorCode !== -3) { // -3 is aborted (navigation during load), ignore
+      dialog.showErrorBox('ClawCode failed to load', `Error ${errorCode}: ${errorDescription}\n\nIf this is a packaged build, the renderer files may be missing.`);
+    }
+  });
 
   // Open external links in browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -185,6 +186,10 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((err) => {
+  // A rejection here used to leave an invisible background process and no window.
+  dialog.showErrorBox('ClawCode failed to start', String(err?.stack ?? err));
+  app.exit(1);
 });
 
 let isQuitting = false;

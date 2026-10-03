@@ -68,6 +68,10 @@ async function launchSession(id: WebChatId, headless: boolean): Promise<ActiveSe
   let context: any;
   try {
     context = await chromium.launchPersistentContext(userDataDir, {
+      // Use system Microsoft Edge (preinstalled on Win10/11) instead of bundling
+      // a ~700 MB Chromium. Eliminates the download/bundle/path issues that
+      // crashed the app on launch.
+      channel: process.platform === 'win32' ? 'msedge' : undefined,
       headless: headless && !FORCE_HEADFUL,
       viewport: { width: 1280, height: 900 },
       // No userAgent override: a hard-coded UA that disagrees with the real browser
@@ -84,8 +88,8 @@ async function launchSession(id: WebChatId, headless: boolean): Promise<ActiveSe
     const msg = String(err?.message ?? err);
     if (/Executable doesn't exist|browserType\.launch|playwright install/i.test(msg)) {
       throw new Error(
-        'The Chromium browser used by the WebChat bridge is not installed. ' +
-        'Run `npx playwright install chromium` (dev) or reinstall ClawCode. Details: ' + msg.split('\n')[0]
+        'The browser used by the WebChat bridge was not found. On Windows it needs Microsoft Edge; ' +
+        'elsewhere run `npx playwright install chromium`. Details: ' + msg.split('\n')[0]
       );
     }
     throw err;
