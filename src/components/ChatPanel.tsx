@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronDown, Code2, Bug, FileSearch, FolderOpen, Plus, RotateCcw, MessageSquare } from 'lucide-react';
+import { ChevronDown, Code2, Bug, FileSearch, FolderOpen, Plus } from 'lucide-react';
 import { useClaw } from '../lib/store';
 import Message from './Message';
 import MessageInput from './MessageInput';
 import PlanPanel from './PlanPanel';
 import AccountSwitcher from './AccountSwitcher';
+import ModelPicker from './ModelPicker';
 
 const SUGGESTIONS = [
   { icon: FileSearch, title: 'Explore this codebase', sub: 'Walk me through the project structure' },
@@ -15,7 +16,6 @@ const SUGGESTIONS = [
 
 export default function ChatPanel() {
   const messages = useClaw((s) => s.messages);
-  const config = useClaw((s) => s.config);
   const workspace = useClaw((s) => s.workspace);
   const sendUserMessage = useClaw((s) => s.sendUserMessage);
   const startNewConversation = useClaw((s) => s.startNewConversation);
@@ -58,10 +58,6 @@ export default function ChatPanel() {
     startNewConversation();
   };
 
-  const handleReset = () => {
-    startNewConversation();
-  };
-
   return (
     <div className="chat-panel">
       <div className="chat-header">
@@ -74,15 +70,8 @@ export default function ChatPanel() {
               {workspace.split(/[\\/]/).pop()}
             </span>
           )}
+          <ModelPicker />
           <AccountSwitcher />
-          <button
-            className="chat-header-btn"
-            onClick={handleReset}
-            data-tooltip="Clear conversation"
-            aria-label="Clear conversation"
-          >
-            <RotateCcw size={13} />
-          </button>
           <button
             className="chat-header-btn primary"
             onClick={handleNewChat}

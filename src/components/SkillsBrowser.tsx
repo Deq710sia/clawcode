@@ -5,7 +5,7 @@ import type { Skill, InstalledSkill } from '../types';
 type Category = 'all' | 'skill' | 'tool' | 'prompt' | 'mod';
 
 export default function SkillsBrowser() {
-  const [view, setView] = useState<'curated' | 'search' | 'installed'>('curated');
+  const [view, setView] = useState<'curated' | 'search' | 'installed'>('search');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category>('all');
   const [curated, setCurated] = useState<Skill[]>([]);
@@ -31,7 +31,7 @@ export default function SkillsBrowser() {
     refreshInstalled();
   }, [refreshCurated, refreshInstalled]);
 
-  const doSearch = async () => {
+  const doSearch = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -43,7 +43,13 @@ export default function SkillsBrowser() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [query, category]);
+
+  // Load results when the Search tab opens and whenever the category changes.
+  useEffect(() => {
+    if (view === 'search') doSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, category]);
 
   const install = async (skill: Skill) => {
     setInstalling((s) => ({ ...s, [skill.name]: true }));
@@ -78,8 +84,8 @@ export default function SkillsBrowser() {
     category === 'all' ? list : list.filter((s) => s.category === category);
 
   const tabs: { id: typeof view; label: string; icon: any }[] = [
-    { id: 'curated', label: 'Featured', icon: Package },
     { id: 'search', label: 'Search GitHub', icon: Search },
+    { id: 'curated', label: 'Featured', icon: Package },
     { id: 'installed', label: 'Installed', icon: CheckCircle2 },
   ];
 
@@ -124,7 +130,7 @@ export default function SkillsBrowser() {
                 onKeyDown={(e) => e.key === 'Enter' && doSearch()}
                 placeholder="Search GitHub for skills, tools, prompts…"
               />
-              <button className="btn primary" onClick={doSearch} disabled={loading}>
+              <button className="btn primary" onClick={() => doSearch()} disabled={loading}>
                 {loading ? <Loader2 size={11} className="spin" /> : 'Search'}
               </button>
             </div>
@@ -203,7 +209,7 @@ export default function SkillsBrowser() {
           <>
             {installed.length === 0 && (
               <div className="browser-empty">
-                No skills installed yet. Browse Featured or Search GitHub to install one.
+                No skills installed yet. Search GitHub or browse Featured to install one.
               </div>
             )}
             <div className="installed-list">

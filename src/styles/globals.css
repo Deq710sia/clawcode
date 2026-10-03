@@ -2953,3 +2953,22 @@ textarea {
 
 .context-bar-fill.warn { background: var(--warn); }
 .context-bar-fill.err { background: var(--err); }
+
+/* Model picker (chat header) */
+.model-picker { position: relative; }
+.model-picker-btn { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.model-picker-btn:hover:not(:disabled) { border-color: var(--accent-bright); }
+.model-picker-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.model-picker-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+  width: 280px; max-height: 360px; overflow-y: auto;
+  background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 8px; padding: 4px 0;
+}
+.model-picker-group-label { padding: 4px 12px; font-size: 10px; text-transform: uppercase; color: var(--fg-2); }
+.model-picker-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 6px 12px; background: none; border: 0; color: var(--fg-1);
+  font-size: 12px; text-align: left; cursor: pointer;
+}
+.model-picker-item:hover { background: var(--bg-3); }
+.model-picker-footer { justify-content: flex-start; border-top: 1px solid var(--border-1); margin-top: 4px; color: var(--fg-2); }
