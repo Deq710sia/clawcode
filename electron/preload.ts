@@ -22,6 +22,9 @@ const api = {
   app: {
     info: () => ipcRenderer.invoke('app:info'),
     openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+    minimize: () => ipcRenderer.invoke('app:minimize'),
+    maximize: () => ipcRenderer.invoke('app:maximize'),
+    close: () => ipcRenderer.invoke('app:close'),
   },
   net: {
     request: (req: { id: string; url: string; method?: string; headers?: Record<string, string>; body?: string }) =>

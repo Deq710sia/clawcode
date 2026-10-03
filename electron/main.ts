@@ -453,6 +453,16 @@ function registerIpc() {
     return { ok: false };
   });
 
+  // Window controls
+  ipcMain.handle('app:minimize', () => { mainWindow?.minimize(); return { ok: true }; });
+  ipcMain.handle('app:maximize', () => {
+    if (!mainWindow) return { ok: false };
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return { ok: true };
+  });
+  ipcMain.handle('app:close', () => { mainWindow?.close(); return { ok: true }; });
+
   // ----- Providers -----
   ipcMain.handle('providers:list', () => PROVIDERS);
 

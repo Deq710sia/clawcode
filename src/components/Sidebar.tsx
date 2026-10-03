@@ -64,6 +64,18 @@ function TreeView({ node, depth }: { node: TreeNode; depth: number }) {
               className={`tree-item ${child.type === 'dir' ? 'dir' : ''} ${isOpen ? 'open' : ''}`}
               style={{ paddingLeft: 6 + depth * 12 }}
               onClick={() => child.type === 'dir' && toggle(child.path)}
+              role="treeitem"
+              aria-expanded={child.type === 'dir' ? isOpen : undefined}
+              aria-label={child.name}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (child.type === 'dir') toggle(child.path);
+                }
+                if (e.key === 'ArrowRight' && child.type === 'dir' && !isOpen) { e.preventDefault(); toggle(child.path); }
+                if (e.key === 'ArrowLeft' && child.type === 'dir' && isOpen) { e.preventDefault(); toggle(child.path); }
+              }}
             >
               {child.type === 'dir' ? (
                 <ChevronRight className="tree-chevron" size={10} />
@@ -87,11 +99,32 @@ function TreeView({ node, depth }: { node: TreeNode; depth: number }) {
 
 export default function Sidebar() {
   const [tab, setTab] = useState<Tab>('explorer');
+  const [fileFilter, setFileFilter] = useState('');
   const files = useClaw((s) => s.files);
   const workspace = useClaw((s) => s.workspace);
   const refreshFiles = useClaw((s) => s.refreshFiles);
 
   const tree = useMemo(() => buildTree(files), [files]);
+
+  // Flat file list for filtering
+  const flatFiles = useMemo(() => {
+    const out: string[] = [];
+    const walk = (n: TreeNode) => {
+      if (!n.children) return;
+      for (const c of n.children) {
+        if (c.type === 'file') out.push(c.path);
+        if (c.children) walk(c);
+      }
+    };
+    if (tree) walk(tree);
+    return out;
+  }, [tree]);
+
+  const filteredFiles = useMemo(() => {
+    if (!fileFilter.trim()) return null;
+    const q = fileFilter.toLowerCase();
+    return flatFiles.filter((p) => p.toLowerCase().includes(q)).slice(0, 100);
+  }, [fileFilter, flatFiles]);
 
   const openFolder = async () => {
     const res = await window.claw.workspace.pick();
@@ -139,12 +172,37 @@ export default function Sidebar() {
 
           {workspace && tree ? (
             <>
-              <div style={{ padding: '6px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-2)', borderBottom: '1px solid var(--border-1)' }}>
+              <div className="sidebar-workspace-path">
                 {workspace.split(/[\\/]/).pop()}
               </div>
-              <div className="sidebar-tree">
-                <TreeView node={tree} depth={0} />
+              <div className="sidebar-search">
+                <input
+                  type="text"
+                  placeholder="Filter files…"
+                  value={fileFilter}
+                  onChange={(e) => setFileFilter(e.target.value)}
+                  aria-label="Filter files"
+                />
               </div>
+              {filteredFiles ? (
+                <div className="sidebar-tree">
+                  {filteredFiles.length === 0 ? (
+                    <div style={{ padding: '12px', fontSize: 11, color: 'var(--fg-3)' }}>No files match "{fileFilter}"</div>
+                  ) : (
+                    filteredFiles.map((p) => (
+                      <div key={p} className="tree-item" role="treeitem" tabIndex={0} aria-label={p}>
+                        <span className="tree-chevron" />
+                        <span className="tree-icon"><File size={12} /></span>
+                        <span className="tree-name">{p}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className="sidebar-tree">
+                  <TreeView node={tree} depth={0} />
+                </div>
+              )}
             </>
           ) : (
             <div className="sidebar-empty">

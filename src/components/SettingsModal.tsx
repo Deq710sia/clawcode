@@ -39,6 +39,15 @@ export default function SettingsModal() {
     })();
   }, []);
 
+  // Escape to close
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setShowSettings(false); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setShowSettings]);
+
   useEffect(() => {
     if (config) {
       setEndpoint(config.endpoint);

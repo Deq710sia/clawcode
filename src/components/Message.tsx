@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -13,8 +13,50 @@ import {
   Terminal,
   Search,
   ListChecks,
+  Copy,
+  Check,
 } from 'lucide-react';
 import type { ChatMessage, ToolCall } from '../types';
+
+/** Copy button for code blocks — appears on hover. */
+function CodeBlockCopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = useCallback(() => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [code]);
+  return (
+    <button
+      className={`code-block-copy ${copied ? 'copied' : ''}`}
+      onClick={onCopy}
+      aria-label={copied ? 'Copied' : 'Copy code'}
+    >
+      {copied ? <Check size={10} /> : <Copy size={10} />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
+/** Wrap <pre> in a div with a copy button. */
+function PreWithCopy({ children, ...props }: any) {
+  // Extract text content from the <code> child for copying
+  let codeText = '';
+  if (children?.props?.children) {
+    codeText = typeof children.props.children === 'string'
+      ? children.props.children
+      : Array.isArray(children.props.children)
+        ? children.props.children.join('')
+        : String(children.props.children ?? '');
+  }
+  return (
+    <div className="code-block-wrapper">
+      <CodeBlockCopyButton code={codeText} />
+      <pre {...props}>{children}</pre>
+    </div>
+  );
+}
 
 function ToolIcon({ name }: { name: string }) {
   const map: Record<string, any> = {
@@ -160,7 +202,7 @@ export default function Message({ msg }: { msg: ChatMessage }) {
         </div>
         {msg.content && (
           <div className="message-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: PreWithCopy }}>{msg.content}</ReactMarkdown>
             {msg.streaming && <span className="streaming-cursor" />}
           </div>
         )}

@@ -231,6 +231,9 @@ declare global {
       app: {
         info: () => Promise<AppInfo>;
         openExternal: (url: string) => Promise<{ ok: boolean }>;
+        minimize: () => Promise<{ ok: boolean }>;
+        maximize: () => Promise<{ ok: boolean }>;
+        close: () => Promise<{ ok: boolean }>;
       };
       providers: {
         list: () => Promise<ProviderPreset[]>;

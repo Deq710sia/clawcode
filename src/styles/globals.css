@@ -1,36 +1,36 @@
 /* =========================================================================
    ClawCode — global theme
-   Aesthetic reference: Cursor (dark navy + violet accents, code-centric).
+   Warm dark base + teal accent. Code-centric, professional.
    Clean-room; no third-party CSS.
    ========================================================================= */
 
 @import 'highlight.js/styles/github-dark.css';
 
 :root {
-  /* Surfaces */
-  --bg-0: #0b0b12;          /* app background (deepest) */
-  --bg-1: #0f0f17;          /* main panels */
-  --bg-2: #14141d;          /* raised surfaces */
-  --bg-3: #1a1a25;          /* hover/active */
-  --bg-4: #232333;          /* selection */
+  /* Surfaces — warm-tinted dark, not slate */
+  --bg-0: #111114;          /* app background (deepest) */
+  --bg-1: #16161a;          /* main panels */
+  --bg-2: #1c1c21;          /* raised surfaces */
+  --bg-3: #232329;          /* hover/active */
+  --bg-4: #2e2e36;          /* selection */
 
   /* Borders */
-  --border-1: #1f1f2c;
-  --border-2: #2a2a3a;
-  --border-3: #383850;
+  --border-1: #222227;
+  --border-2: #2e2e36;
+  --border-3: #3a3a44;
 
-  /* Text */
-  --fg-0: #f4f4f8;          /* primary */
-  --fg-1: #c5c5d2;          /* secondary */
-  --fg-2: #8a8aa0;          /* muted */
-  --fg-3: #5b5b73;          /* very muted */
+  /* Text — fixed contrast for WCAG AA */
+  --fg-0: #f0f0f3;          /* primary (15:1 on bg-0) */
+  --fg-1: #c8c8d0;          /* secondary (10:1) */
+  --fg-2: #9a9aa6;          /* muted (6.5:1) */
+  --fg-3: #7a7a86;          /* very muted (4.6:1 — meets AA) */
 
-  /* Accents (violet) */
-  --accent: #a78bfa;
-  --accent-bright: #c4b5fd;
-  --accent-dim: #7c5cfc;
-  --accent-faint: rgba(167, 139, 250, 0.12);
-  --accent-glow: rgba(167, 139, 250, 0.25);
+  /* Accent — teal instead of violet (less AI-default) */
+  --accent: #5eead4;
+  --accent-bright: #7ff5e1;
+  --accent-dim: #2dd4bf;
+  --accent-faint: rgba(94, 234, 212, 0.10);
+  --accent-glow: rgba(94, 234, 212, 0.20);
 
   /* Status */
   --ok: #4ade80;
@@ -39,9 +39,9 @@
   --info: #60a5fa;
 
   /* Typography */
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-ui: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, Menlo, Consolas, monospace;
-  --font-prose: 'Inter', -apple-system, sans-serif;
+  --font-prose: 'Geist', 'Inter', -apple-system, sans-serif;
 
   /* Sizing */
   --topbar-h: 36px;
@@ -71,7 +71,7 @@ html, body, #root {
 
 body {
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--fg-0);
   background: var(--bg-0);
   -webkit-font-smoothing: antialiased;
@@ -86,6 +86,17 @@ button {
   background: none;
   border: none;
   cursor: pointer;
+}
+
+/* Visible focus rings for keyboard navigation (WCAG 2.4.7) */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Mouse clicks don't show focus rings */
+:focus:not(:focus-visible) {
   outline: none;
 }
 
@@ -97,7 +108,6 @@ input, textarea, select {
   border: 1px solid var(--border-2);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
-  outline: none;
   transition: border-color 0.15s;
 }
 
@@ -242,6 +252,27 @@ textarea {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.sidebar-workspace-path {
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-2);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.sidebar-search {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.sidebar-search input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-2);
 }
 
 .sidebar-header {
@@ -1818,7 +1849,7 @@ textarea {
   transition: background 0.1s;
 }
 
-.slash-menu-item:hover { background: var(--bg-3); }
+.slash-menu-item:hover, .slash-menu-item.active { background: var(--bg-3); }
 
 .slash-menu-cmd {
   font-size: 12px;
@@ -2359,4 +2390,228 @@ textarea {
   background: rgba(250, 204, 21, 0.08);
   border-color: var(--warn);
   color: var(--warn);
+}
+
+/* =========================================================================
+   Accessibility: reduced motion
+   ========================================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =========================================================================
+   Utility classes
+   ========================================================================= */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.kbd {
+  display: inline-block;
+  background: var(--bg-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-1);
+}
+
+/* Code block copy button */
+.code-block-wrapper {
+  position: relative;
+}
+
+.code-block-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  color: var(--fg-2);
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-family: var(--font-ui);
+}
+
+.code-block-wrapper:hover .code-block-copy {
+  opacity: 1;
+}
+
+.code-block-copy:hover {
+  background: var(--bg-4);
+  color: var(--fg-0);
+}
+
+.code-block-copy.copied {
+  color: var(--ok);
+  opacity: 1;
+}
+
+/* Scroll-to-bottom button */
+.scroll-to-bottom {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  color: var(--fg-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-2);
+  transition: all 0.15s;
+  z-index: 20;
+}
+
+.scroll-to-bottom:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border-color: var(--accent);
+}
+
+/* Window controls (minimize / maximize / close) */
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  -webkit-app-region: no-drag;
+  margin-left: 4px;
+}
+
+.window-control {
+  width: 36px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-2);
+  transition: background 0.1s, color 0.1s;
+}
+
+.window-control:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+
+.window-control.close:hover {
+  background: #e02424;
+  color: white;
+}
+
+/* Confirm dialog (replaces native confirm()) */
+.confirm-dialog {
+  width: min(400px, 90vw);
+}
+
+.confirm-dialog-body {
+  padding: 20px;
+  font-size: 13px;
+  color: var(--fg-1);
+  line-height: 1.6;
+}
+
+.confirm-dialog-message {
+  margin-bottom: 8px;
+}
+
+.confirm-dialog-detail {
+  font-size: 12px;
+  color: var(--fg-2);
+}
+
+/* Tooltip (CSS-only, for icon-only buttons) */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--bg-4);
+  color: var(--fg-0);
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-3);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s 0.3s;
+  z-index: 1000;
+  font-family: var(--font-ui);
+}
+
+[data-tooltip]:hover::after {
+  opacity: 1;
+}
+
+/* Suggestion card disabled state */
+.suggestion-card:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Error boundary fallback */
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 16px;
+  padding: 40px;
+  text-align: center;
+  background: var(--bg-0);
+}
+
+.error-boundary-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.error-boundary-message {
+  font-size: 13px;
+  color: var(--fg-2);
+  max-width: 400px;
+  line-height: 1.6;
+}
+
+.error-boundary-details {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  max-width: 500px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }

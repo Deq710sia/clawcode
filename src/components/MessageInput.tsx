@@ -5,6 +5,7 @@ import { useClaw } from '../lib/store';
 export default function MessageInput() {
   const [text, setText] = useState('');
   const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const isStreaming = useClaw((s) => s.isStreaming);
   const sendUserMessage = useClaw((s) => s.sendUserMessage);
@@ -46,6 +47,7 @@ export default function MessageInput() {
 
   useEffect(() => {
     setShowSlashMenu(filteredCmds.length > 0);
+    setSlashMenuIndex(0);
   }, [filteredCmds]);
 
   useEffect(() => {
@@ -86,8 +88,30 @@ export default function MessageInput() {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Slash menu keyboard navigation
+    if (showSlashMenu && filteredCmds.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashMenuIndex((i) => (i + 1) % filteredCmds.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashMenuIndex((i) => (i - 1 + filteredCmds.length) % filteredCmds.length);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        pickCommand(filteredCmds[slashMenuIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowSlashMenu(false);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      if (showSlashMenu) return; // let the menu handle Enter
       e.preventDefault();
       submit();
     }
@@ -117,14 +141,15 @@ export default function MessageInput() {
         {showSlashMenu && (
           <div className="slash-menu">
             <div className="slash-menu-header">Skills</div>
-            {filteredCmds.map((c) => (
+            {filteredCmds.map((c, i) => (
               <button
                 key={c.name + c.skill}
-                className="slash-menu-item"
+                className={`slash-menu-item ${i === slashMenuIndex ? 'active' : ''}`}
                 onClick={() => pickCommand(c)}
+                onMouseEnter={() => setSlashMenuIndex(i)}
               >
                 <span className="slash-menu-cmd mono">/{c.name}</span>
-                <span className="slash-menu-desc">{c.description.slice(0, 60)}</span>
+                <span className="slash-menu-desc">{c.description}</span>
                 <span className="slash-menu-skill">{c.skill}</span>
               </button>
             ))}
@@ -132,10 +157,10 @@ export default function MessageInput() {
         )}
         <div className="composer-footer">
           <span className="composer-hint">
-            <kbd style={{ background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3, border: '1px solid var(--border-2)' }}>Enter</kbd> send ·{' '}
-            <kbd style={{ background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3, border: '1px solid var(--border-2)' }}>Shift+Enter</kbd> newline
+            <kbd className="kbd">Enter</kbd> send ·{' '}
+            <kbd className="kbd">Shift+Enter</kbd> newline
             {slashCommands.length > 0 && (
-              <> · <kbd style={{ background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3, border: '1px solid var(--border-2)' }}>/</kbd> skills</>
+              <> · <kbd className="kbd">/</kbd> skills</>
             )}
           </span>
           <div className="composer-spacer" />

@@ -7,6 +7,7 @@ import ChatPanel from './components/ChatPanel';
 import SettingsModal from './components/SettingsModal';
 import WelcomeModal from './components/WelcomeModal';
 import StatusBar from './components/StatusBar';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const config = useClaw((s) => s.config);
@@ -53,15 +54,17 @@ export default function App() {
   }, [refreshFiles]);
 
   return (
-    <div className="app-root">
-      <TopBar />
-      <div className="app-body">
-        <Sidebar />
-        <ChatPanel />
+    <ErrorBoundary>
+      <div className="app-root">
+        <TopBar />
+        <div className="app-body">
+          <Sidebar />
+          <ChatPanel />
+        </div>
+        <StatusBar />
+        {showSettings && <SettingsModal />}
+        {showWelcome && <WelcomeModal />}
       </div>
-      <StatusBar />
-      {showSettings && <SettingsModal />}
-      {showWelcome && <WelcomeModal />}
-    </div>
+    </ErrorBoundary>
   );
 }
