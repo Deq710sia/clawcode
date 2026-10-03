@@ -9,7 +9,7 @@
  * use the Windows Sandbox integration for hard isolation.
  */
 import { app, safeStorage } from 'electron';
-import { join, relative, isAbsolute } from 'node:path';
+import { join, relative, isAbsolute, sep } from 'node:path';
 import { existsSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { spawn, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -262,7 +262,7 @@ export async function runCommandSandboxed(command: string, opts: { cwd: string; 
   }
   const cwd = opts.cwd || cfg.workspacePath;
   const rel = relative(cfg.workspacePath, cwd);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) {
     throw new Error(`Sandbox only has access to ${cfg.workspacePath}. Re-run sandbox setup for the current workspace (${cwd}).`);
   }
   const password = decryptPassword(cfg.passwordCipher);
@@ -308,8 +308,15 @@ $result = @{ exit = $(if ($timedOut) { -1 } else { $p.ExitCode }); timedOut = $t
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($result | ConvertTo-Json -Compress)))
 `.trim();
 
+  // The command is base64'd to UTF-16 twice (about 7x its size) and passed on a command line.
+  // Windows caps a command line near 32,767 characters, so fail clearly instead of with a cryptic spawn error.
+  const outerEncoded = Buffer.from(script, 'utf16le').toString('base64');
+  if (outerEncoded.length > 30_000) {
+    throw new Error(`Command too long for the sandbox (${command.length} chars; limit is about 3500). Write the content to a file with write_file and run a short command instead.`);
+  }
+
   return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', outerEncoded], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -323,10 +330,11 @@ $result = @{ exit = $(if ($timedOut) { -1 } else { $p.ExitCode }); timedOut = $t
       clearTimeout(killer);
       try {
         const payload = JSON.parse(Buffer.from(out.trim().split(/\r?\n/).pop() || '', 'base64').toString('utf8'));
+        const cap = (t: string) => (t.length > 200_000 ? t.slice(0, 200_000) + '\n[ClawCode] output truncated' : t);
         resolve({
           ok: payload.exit === 0,
-          stdout: payload.out ?? '',
-          stderr: (payload.err ?? '') + (payload.timedOut ? '\n[ClawCode] process timed out' : ''),
+          stdout: cap(String(payload.out ?? '')),
+          stderr: cap(String(payload.err ?? '')) + (payload.timedOut ? '\n[ClawCode] process timed out' : ''),
           exitCode: payload.exit ?? null,
         });
       } catch {
