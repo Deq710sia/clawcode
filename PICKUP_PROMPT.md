@@ -14,7 +14,7 @@ any AI model (API providers, local LLM servers, or free web chats via headless b
 it read, write, and edit files in your workspace, run shell commands, and search the web.
 
 **Repo**: https://github.com/Deq710sia/clawcode
-**Current version**: v0.8.0 (with uncommitted fixes for v0.8.1)
+**Current version**: v0.8.1 (branch `v0.8.1-fixes`, awaiting merge to main)
 **Stack**: Electron 29 + React 18 + TypeScript 5 + Vite 5
 **Build**: `npm install && npm run build && npm run dist` → portable .exe for Windows 10/11 x64
 
@@ -320,3 +320,25 @@ The repo is at `github.com/Deq710sia/clawcode`, user is `Deq710sia`.
 | `src/lib/netfetch.ts` | CORS proxy | `proxyFetch()` |
 | `src/components/ChatPanel.tsx` | Chat UI | messages, scroll, suggestions |
 | `src/components/SettingsModal.tsx` | Settings (7 tabs) | provider, accounts, webchats, sandbox, updates |
+
+
+---
+
+## v0.8.1 session log (branch `v0.8.1-fixes`)
+
+Done, typecheck + build pass (UI not run by hand; Windows `run_command` path untested on real Windows):
+- Fixed `toolprotocol.ts` syntax error that broke `npm run typecheck`.
+- `edit_file`: whitespace/CRLF-tolerant fallback (refuses if ambiguous).
+- In-chat `ModelPicker` (active provider's models; link to Settings for provider/key change). Removed duplicate Clear button.
+- Skills browser: Search tab first, auto-loads, reloads on category change.
+- Onboarding: Welcome shows one step at a time with a working folder picker; empty-chat button opens the picker directly.
+- `run_command`: PowerShell `-NoProfile`, UTF-8, process-tree kill on timeout, 200k char output cap, `timedOut` flag.
+- Thinking panel: `reasoning_content` / `reasoning` deltas and `<think>` tags -> collapsible block. Display only, never re-sent.
+- New allowlisted `git` tool (status/diff/log/show/branch list/add/commit). No push/reset/checkout.
+- `docs/TAURI_MIGRATION.md`: phased plan.
+
+Still open:
+- Settings lockout: no code-level cause found (modal closes via X, Close, Escape, backdrop). Needs a repro.
+- No tests in the repo. Add handler contract tests before any Tauri work.
+- Git UI (panel/diff view) not built; only the tool exists.
+- Lockfile note: `npm install` strips `libc` fields from package-lock.json. Edit version lines by hand.
