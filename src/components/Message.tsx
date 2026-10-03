@@ -16,6 +16,7 @@ import {
   Copy,
   Check,
   Brain,
+  GitBranch,
 } from 'lucide-react';
 import type { ChatMessage, ToolCall } from '../types';
 
@@ -83,6 +84,7 @@ function ToolIcon({ name }: { name: string }) {
     write_file: Save,
     edit_file: Pencil,
     run_command: Play,
+    git: GitBranch,
     delete_file: Trash2,
     move_file: ArrowRight,
     update_plan: ListChecks,
@@ -97,6 +99,7 @@ function argsPreview(name: string, args: Record<string, any>): string {
   if (name === 'read_file' || name === 'delete_file') return args.path ?? '';
   if (name === 'write_file') return args.path ?? '';
   if (name === 'edit_file') return `${args.path} · ${args.replacements?.length ?? 0} edits`;
+  if (name === 'git') return `${args.subcommand ?? ''} ${(args.args ?? []).join(' ')}`.trim().slice(0, 80);
   if (name === 'run_command') return (args.command ?? '').slice(0, 80);
   if (name === 'move_file') return `${args.from} → ${args.to}`;
   if (name === 'update_plan') return `${args.items?.length ?? 0} items`;

@@ -159,6 +159,21 @@ const TOOL_SCHEMAS = [
   {
     type: 'function' as const,
     function: {
+      name: 'git',
+      description: 'Safe git access in the workspace. Subcommands: status, diff, log, show, branch (list only), add, commit (needs -m). No push/reset/checkout. Prefer this over run_command for git.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subcommand: { type: 'string', enum: ['status', 'diff', 'log', 'show', 'branch', 'add', 'commit'] },
+          args: { type: 'array', items: { type: 'string' }, description: 'Arguments after the subcommand, e.g. ["-m", "message"].' },
+        },
+        required: ['subcommand'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'run_command',
       description: 'Execute a shell command in the workspace (bash on Unix, PowerShell on Windows). Use for builds, tests, git, etc.',
       parameters: {
@@ -246,7 +261,7 @@ OPERATING PROTOCOL:
 4. ONE THING AT A TIME. Make one logical change per tool call, observe the result, then continue.
 5. UPDATE THE PLAN. After each meaningful step, mark it done and start the next.
 6. RECOVER FROM ERRORS. If a tool fails, read the error, adjust your approach, and retry — don't get stuck. If a tool fails twice with the same error, STOP and explain the problem to the user instead of retrying.
-7. VERIFY. After making changes, run_command (tests, typecheck, build) to verify your work.
+7. VERIFY. After making changes, run_command (tests, typecheck, build) to verify your work. Use the git tool to inspect changes (status, diff) and to commit when asked.
 8. BE CONCISE IN PROSE. Verbose in code. Use markdown for prose, fenced blocks for code.
 9. ALWAYS SYNTHESIZE. After receiving tool results, you MUST write a natural language response
    explaining what you found, what you did, and what it means. Do NOT just call another tool

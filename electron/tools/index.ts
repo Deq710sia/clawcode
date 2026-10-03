@@ -372,6 +372,78 @@ const runCommand: ToolDef = {
 };
 
 // ---------------------------------------------------------------------------
+// Tool: git
+// ---------------------------------------------------------------------------
+// Allowlisted, shell-free git access. No push/reset/clean/force: those stay with the user.
+const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'branch']);
+const GIT_WRITE = new Set(['add', 'commit']);
+
+const gitTool: ToolDef = {
+  name: 'git',
+  description:
+    'Run a safe git subcommand in the workspace. Allowed: status, diff, log, show, branch (read-only listing), add, commit. ' +
+    'Pass arguments as an array, e.g. { subcommand: "commit", args: ["-m", "fix: typo"] }. ' +
+    'Push, reset, clean, checkout, rebase and force flags are not available. Returns { ok, exitCode, stdout, stderr }.',
+  parameters: {
+    type: 'object',
+    properties: {
+      subcommand: { type: 'string', enum: [...GIT_READ, ...GIT_WRITE] },
+      args: { type: 'array', items: { type: 'string' }, description: 'Arguments after the subcommand.' },
+    },
+    required: ['subcommand'],
+  },
+  run: async (args, ctx) => {
+    const sub = String(args.subcommand ?? '');
+    const rest: string[] = Array.isArray(args.args) ? args.args.map(String) : [];
+    if (!GIT_READ.has(sub) && !GIT_WRITE.has(sub)) {
+      return { ok: false, error: `git ${sub} is not allowed. Allowed: ${[...GIT_READ, ...GIT_WRITE].join(', ')}` };
+    }
+    // `git branch` is listing only: reject anything that creates, renames or deletes branches.
+    if (sub === 'branch' && rest.some((a) => /^-(d|D|m|M|c|C|f)$|^--(delete|move|copy|force|set-upstream-to|unset-upstream)/.test(a) || !a.startsWith('-'))) {
+      return { ok: false, error: 'git branch is read-only here; only listing flags (e.g. -a, -vv) are allowed.' };
+    }
+    // Block flags that execute commands or escape the workspace.
+    const banned = /^(--force|-f|--exec|--upload-pack|--receive-pack|--output|--git-dir|--work-tree|-c|--config)(=|$)/;
+    if (rest.some((a) => banned.test(a))) {
+      return { ok: false, error: 'That flag is not allowed.' };
+    }
+    // Pathspecs must stay inside the workspace.
+    for (const a of rest) {
+      if (!a.startsWith('-') && (a.startsWith('..') || isAbsolute(a))) {
+        const resolved = pathResolve(isAbsolute(a) ? a : join(ctx.workspace, a));
+        const rel = relative(ctx.workspace, resolved);
+        if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) {
+          return { ok: false, error: `Path escapes workspace: ${a}` };
+        }
+      }
+    }
+    if (sub === 'commit' && !rest.some((a) => a === '-m' || a.startsWith('--message') || a === '-F')) {
+      return { ok: false, error: 'git commit requires -m "<message>" (no interactive editor).' };
+    }
+
+    const { execFile } = await import('node:child_process');
+    return new Promise((resolve) => {
+      execFile(
+        'git',
+        ['--no-pager', sub, ...rest],
+        {
+          cwd: ctx.workspace,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true', GIT_PAGER: 'cat' },
+          timeout: 30_000,
+          maxBuffer: 2_000_000,
+          windowsHide: true,
+        },
+        (err: any, stdout, stderr) => {
+          if (err && err.code === 'ENOENT') return resolve({ ok: false, error: 'git is not installed or not on PATH.', stdout: '', stderr: '' });
+          const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
+          resolve({ ok: code === 0, exitCode: code, stdout: String(stdout), stderr: String(stderr) });
+        },
+      );
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Tool: delete_file
 // ---------------------------------------------------------------------------
 const deleteFile: ToolDef = {
@@ -496,6 +568,7 @@ export const TOOLS: ToolDef[] = [
   writeFile,
   editFile,
   runCommand,
+  gitTool,
   deleteFile,
   moveFile,
   updatePlan,
