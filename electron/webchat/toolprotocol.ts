@@ -98,7 +98,7 @@ export function buildPrompt(messages: OAIMessage[], tools: OAITool[] = []): stri
       '- After receiving [Tool result: ...] entries, you MUST write a natural language response',
       '  explaining what you found, what you did, and what it means. Do NOT just call another tool',
       '  or output an empty response. The user needs to understand what happened.',
-      '- Think of it like talking to a colleague: "I checked the file and here's what I found..."',
+      "- Think of it like talking to a colleague: 'I checked the file and here is what I found...'",
       '- Only call another tool if the current task genuinely requires more information.',
       '  If you have enough to answer, STOP calling tools and write your synthesis.',
       '- Never end a turn with just tool calls. Always wrap up with plain text.',

@@ -142,6 +142,26 @@ const writeFile: ToolDef = {
   },
 };
 
+
+/** Find `needle` in `hay` ignoring CRLF and trailing spaces per line. Returns the real matched text. */
+function fuzzyFind(hay: string, needle: string): { index: number; matched: string } | null {
+  const norm = (t: string) => t.replace(/\r\n/g, '\n').split('\n').map((l) => l.replace(/[ \t]+$/, ''));
+  const h = hay.split('\n');
+  const n = norm(needle);
+  if (n.length === 0) return null;
+  const hn = h.map((l) => l.replace(/\r$/, '').replace(/[ \t]+$/, ''));
+  let found = -1;
+  for (let i = 0; i + n.length <= hn.length; i++) {
+    let ok = true;
+    for (let j = 0; j < n.length; j++) if (hn[i + j] !== n[j]) { ok = false; break; }
+    if (ok) { if (found !== -1) return null; found = i; } // ambiguous -> refuse
+  }
+  if (found === -1) return null;
+  const index = h.slice(0, found).reduce((a, l) => a + l.length + 1, 0);
+  const matched = h.slice(found, found + n.length).join('\n');
+  return { index, matched };
+}
+
 // ---------------------------------------------------------------------------
 // Tool: edit_file
 // ---------------------------------------------------------------------------
@@ -176,7 +196,7 @@ const editFile: ToolDef = {
     const applied: { old: string; new: string }[] = [];
     const failed: { old: string; reason: string }[] = [];
 
-    for (const r of args.replacements ?? []) {
+    for (let r of args.replacements ?? []) {
       if (typeof r?.old !== 'string' || typeof r?.new !== 'string' || r.old === '') {
         failed.push({ old: String(r?.old ?? '').slice(0, 80), reason: '`old` and `new` must be strings and `old` must be non-empty' });
         continue;
@@ -186,11 +206,19 @@ const editFile: ToolDef = {
         continue;
       }
       // Match against the *current* text so sequential replacements compose correctly.
-      const first = updated.indexOf(r.old);
+      let first = updated.indexOf(r.old);
+      let oldText = r.old;
       if (first === -1) {
-        failed.push({ old: r.old.slice(0, 80), reason: 'old string not found' });
-        continue;
+        // Fallback: tolerate CRLF vs LF and trailing-whitespace drift.
+        const fuzzy = fuzzyFind(updated, r.old);
+        if (!fuzzy) {
+          failed.push({ old: r.old.slice(0, 80), reason: 'old string not found (exact or whitespace-tolerant)' });
+          continue;
+        }
+        first = fuzzy.index;
+        oldText = fuzzy.matched;
       }
+      r = { ...r, old: oldText };
       if (!r.replaceAll && updated.indexOf(r.old, first + 1) !== -1) {
         failed.push({ old: r.old.slice(0, 80), reason: 'old string is not unique; add more surrounding context or set replaceAll' });
         continue;
