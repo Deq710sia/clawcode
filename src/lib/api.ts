@@ -9,6 +9,8 @@
  *   4. long-context truncation (keep system + last N messages + recent tool results)
  */
 
+import { proxyFetch } from './netfetch';
+
 export interface ApiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -98,7 +100,7 @@ const TOOL_SCHEMAS = [
             type: 'array',
             items: {
               type: 'object',
-              properties: { old: { type: 'string' }, new: { type: 'string' } },
+              properties: { old: { type: 'string' }, new: { type: 'string' }, replaceAll: { type: 'boolean' } },
               required: ['old', 'new'],
             },
           },
@@ -235,7 +237,11 @@ function truncateHistory(messages: ApiMessage[], maxChars: number = 100_000): Ap
   if (firstUserIdx >= 0) kept.push(messages[firstUserIdx]);
 
   // Take last N messages
-  const tail = messages.slice(Math.max(firstUserIdx + 1, messages.length - 20));
+  let tail = messages.slice(Math.max(firstUserIdx + 1, messages.length - 20));
+  // A `tool` message is only valid directly after the assistant message that issued the
+  // call. If the cut landed in the middle of a round, drop the orphaned tool results,
+  // otherwise providers reject the request with HTTP 400.
+  while (tail.length && tail[0].role === 'tool') tail = tail.slice(1);
   for (const m of tail) {
     if (m.role === 'tool' && (m.content?.length ?? 0) > 4000) {
       kept.push({ ...m, content: (m.content ?? '').slice(0, 2000) + '\n…[truncated]…\n' + (m.content ?? '').slice(-1500) });
@@ -244,6 +250,17 @@ function truncateHistory(messages: ApiMessage[], maxChars: number = 100_000): Ap
     }
   }
   return kept;
+}
+
+/** Strip fields providers reject (e.g. an empty `tool_calls: []` array on plain assistant turns). */
+function sanitizeForWire(m: ApiMessage): ApiMessage {
+  const out: any = { role: m.role, content: m.content ?? '' };
+  if (m.tool_calls && m.tool_calls.length > 0) out.tool_calls = m.tool_calls;
+  if (m.role === 'tool') {
+    out.tool_call_id = m.tool_call_id;
+    if (m.name) out.name = m.name;
+  }
+  return out;
 }
 
 export async function streamChat(opts: StreamChatOpts) {
@@ -264,61 +281,45 @@ export async function streamChat(opts: StreamChatOpts) {
 
   const body: any = {
     model: opts.model || 'gpt-4o-mini',
-    messages: truncated,
+    messages: truncated.map(sanitizeForWire),
     stream: true,
     tools: TOOL_SCHEMAS,
     tool_choice: 'auto',
-    temperature: 0.4,
+  };
+  // OpenAI reasoning models (o1/o3/o4/gpt-5) reject any non-default temperature.
+  if (!/^(o\d|gpt-5)/i.test(body.model)) body.temperature = 0.4;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
+    // OpenRouter requires these headers
+    ...(base.includes('openrouter') ? { 'HTTP-Referer': 'https://clawcode.app', 'X-Title': 'ClawCode' } : {}),
   };
 
-  // Some endpoints (Ollama, LM Studio, WebChat Bridge) reject `tools` if empty or unsupported.
-  // We try with tools first; on 400 we retry without.
+  const post = (payload: any) =>
+    proxyFetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal: opts.signal });
+
+  // Some endpoints (Ollama, LM Studio, older local servers) reject `tools`.
+  // Try with tools first; on a tool-related 400 retry without.
   let res: Response;
   try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
-        // OpenRouter requires these headers
-        ...(base.includes('openrouter') ? {
-          'HTTP-Referer': 'https://clawcode.app',
-          'X-Title': 'ClawCode',
-        } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    });
+    res = await post(body);
+    if (res.status === 400 || res.status === 422) {
+      const errText = await res.text().catch(() => '');
+      if (/tool|function|unsupported/i.test(errText)) {
+        const bodyNoTools = { ...body };
+        delete bodyNoTools.tools;
+        delete bodyNoTools.tool_choice;
+        res = await post(bodyNoTools);
+      } else {
+        opts.onEvent({ type: 'error', message: `HTTP ${res.status}: ${errText.slice(0, 500)}` });
+        return;
+      }
+    }
   } catch (err: any) {
     if (err?.name === 'AbortError') return;
     opts.onEvent({ type: 'error', message: `Network error: ${err?.message ?? err}` });
     return;
-  }
-
-  if (res.status === 400 || res.status === 422) {
-    // Retry without tools (some local servers don't support function calling)
-    const errText = await res.text().catch(() => '');
-    if (errText.includes('tool') || errText.includes('function') || errText.includes('unsupported')) {
-      const bodyNoTools = { ...body };
-      delete bodyNoTools.tools;
-      delete bodyNoTools.tool_choice;
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
-        },
-        body: JSON.stringify(bodyNoTools),
-        signal: opts.signal,
-      }).catch((err) => {
-        opts.onEvent({ type: 'error', message: err?.message ?? String(err) });
-        return null as any;
-      });
-      if (!res) return;
-    } else {
-      opts.onEvent({ type: 'error', message: `HTTP ${res.status}: ${errText.slice(0, 500)}` });
-      return;
-    }
   }
 
   if (!res.ok) {
@@ -341,7 +342,12 @@ export async function streamChat(opts: StreamChatOpts) {
     if (toolCallBuffers.size === 0) return;
     const calls = Array.from(toolCallBuffers.values()).map((c) => {
       let args: Record<string, any> = {};
-      try { args = c.argsStr ? JSON.parse(c.argsStr) : {}; } catch {}
+      try {
+        args = c.argsStr ? JSON.parse(c.argsStr) : {};
+      } catch (e: any) {
+        // Surface malformed JSON to the model instead of silently running the tool with {}.
+        args = { __parse_error: `Tool arguments were not valid JSON (${e?.message}). Raw: ${c.argsStr.slice(0, 300)}` };
+      }
       return { id: c.id, name: c.name, args };
     });
     opts.onEvent({ type: 'tool_calls', calls });

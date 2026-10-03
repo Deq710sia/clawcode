@@ -3,19 +3,23 @@
  * Exposes OpenAI-compatible /v1/chat/completions on 127.0.0.1:7777.
  * Routes requests to the right web chat based on the `model` field.
  *
- * Model → web chat mapping:
- *   "claude.ai"    → claude
- *   "chatgpt.com"  → chatgpt
- *   "gemini.google.com" → gemini
- *   "grok.com"     → grok
- *   "deepseek.com" → deepseek
+ * Because web chats have no function-calling API, `tools` and tool results are translated
+ * to/from a text protocol (see toolprotocol.ts) so the agent loop works over them.
+ *
+ * Security: this server drives logged-in browser sessions, so it must not be reachable
+ * from web pages. No CORS headers are sent, cross-origin browser requests (Origin header)
+ * are rejected unless they carry the per-launch token, and the Host header must be loopback
+ * (blocks DNS-rebinding).
  */
 import express from 'express';
-import cors from 'cors';
+import { randomBytes } from 'node:crypto';
 import { query, getBridgeStatus, type WebChatId } from './bridge.js';
+import { buildPrompt, parseReply, type OAIMessage, type OAITool } from './toolprotocol.js';
 
-const PORT = 7777;
+export const BRIDGE_PORT = 7777;
 const HOST = '127.0.0.1';
+export const BRIDGE_TOKEN = randomBytes(16).toString('hex');
+export const BRIDGE_TOKEN_HEADER = 'x-clawcode-bridge-token';
 
 let server: any = null;
 
@@ -26,34 +30,57 @@ function modelToWebChat(model: string): WebChatId | null {
   if (m.includes('gemini') || m.includes('google')) return 'gemini';
   if (m.includes('grok') || m.includes('xai')) return 'grok';
   if (m.includes('deepseek')) return 'deepseek';
-  // Direct match
-  if (m === 'claude.ai') return 'claude';
-  if (m === 'chatgpt.com') return 'chatgpt';
-  if (m === 'gemini.google.com') return 'gemini';
-  if (m === 'grok.com') return 'grok';
-  if (m === 'deepseek.com') return 'deepseek';
   return null;
 }
+
+const MODEL_IDS: Record<string, string> = {
+  claude: 'claude.ai',
+  chatgpt: 'chatgpt.com',
+  gemini: 'gemini.google.com',
+  grok: 'grok.com',
+  deepseek: 'deepseek.com',
+};
+
+function streamableLength(full: string): number {
+  const lead = full.trimStart();
+  if (lead.length > 0 && lead.length < '[Assistant]'.length && '[Assistant]'.startsWith(lead)) return 0;
+  const fence = full.indexOf('```');
+  const brace = full.search(/\{\s*"tool_call"/);
+  let cut = full.length;
+  if (fence !== -1) cut = Math.min(cut, fence);
+  if (brace !== -1) cut = Math.min(cut, brace);
+  while (cut > 0 && full[cut - 1] === '`' && cut === full.length) cut--;
+  if (cut < full.length) cut = full.slice(0, cut).trimEnd().length;
+  return cut;
+}
+
+const stripLabel = (s: string) => s.replace(/^\s*\[Assistant\]\s*/i, '');
 
 export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error?: string }> {
   return new Promise((resolve) => {
     if (server) {
-      resolve({ ok: true, port: PORT });
+      resolve({ ok: true, port: BRIDGE_PORT });
       return;
     }
     const app = express();
-    app.use(cors());
-    app.use(express.json({ limit: '10mb' }));
 
-    // GET /v1/models — list available web chats as models
+    app.use((req, res, next) => {
+      const host = (req.headers.host || '').toLowerCase();
+      if (!(host === `127.0.0.1:${BRIDGE_PORT}` || host === `localhost:${BRIDGE_PORT}`)) {
+        res.status(403).json({ error: { message: 'Forbidden host', type: 'forbidden' } });
+        return;
+      }
+      if (req.headers.origin && req.headers[BRIDGE_TOKEN_HEADER] !== BRIDGE_TOKEN) {
+        res.status(403).json({ error: { message: 'Cross-origin requests are not allowed', type: 'forbidden' } });
+        return;
+      }
+      next();
+    });
+    app.use(express.json({ limit: '20mb' }));
+
     app.get('/v1/models', (_req, res) => {
-      const profiles = getBridgeStatus();
-      const data = profiles.map((p) => ({
-        id: p.id === 'claude' ? 'claude.ai' :
-            p.id === 'chatgpt' ? 'chatgpt.com' :
-            p.id === 'gemini' ? 'gemini.google.com' :
-            p.id === 'grok' ? 'grok.com' :
-            p.id === 'deepseek' ? 'deepseek.com' : p.id,
+      const data = getBridgeStatus().map((p) => ({
+        id: MODEL_IDS[p.id] ?? p.id,
         object: 'model' as const,
         created: Math.floor(Date.now() / 1000),
         owned_by: 'clawcode-webchat',
@@ -61,36 +88,46 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
       res.json({ object: 'list', data });
     });
 
-    // GET /v1/bridge/status — ClawCode-specific status endpoint
     app.get('/v1/bridge/status', (_req, res) => {
       res.json({ profiles: getBridgeStatus() });
     });
 
-    // POST /v1/chat/completions — stream a response from the web chat
     app.post('/v1/chat/completions', async (req, res) => {
-      const { model, messages, stream } = req.body || {};
+      const { model, messages, stream, tools } = (req.body || {}) as {
+        model?: string; messages?: OAIMessage[]; stream?: boolean; tools?: OAITool[];
+      };
       const webChatId = modelToWebChat(model || '');
       if (!webChatId) {
         res.status(400).json({ error: { message: `Unknown model: ${model}. Use claude.ai / chatgpt.com / gemini.google.com / grok.com / deepseek.com`, type: 'invalid_request_error' } });
         return;
       }
-
-      // Concatenate the conversation: we send only the last user message to the web chat.
-      // (Web chats don't have a clean API to inject multi-turn history; we trust that
-      // the active conversation in the browser is the source of truth.)
-      const lastUser = [...messages].reverse().find((m: any) => m.role === 'user');
-      if (!lastUser) {
-        res.status(400).json({ error: { message: 'No user message found', type: 'invalid_request_error' } });
+      if (!Array.isArray(messages) || !messages.some((m) => m?.role === 'user')) {
+        res.status(400).json({ error: { message: 'messages must contain at least one user message', type: 'invalid_request_error' } });
         return;
       }
-      const text = typeof lastUser.content === 'string'
-        ? lastUser.content
-        : Array.isArray(lastUser.content)
-          ? lastUser.content.map((c: any) => c.text || '').join('\n')
-          : '';
+
+      const toolList = Array.isArray(tools) ? tools.filter((t) => t?.function?.name) : [];
+      const toolNames = toolList.map((t) => t.function!.name);
+      const toolMode = toolList.length > 0;
+
+      const onlyUser = messages.length === 1 && messages[0].role === 'user';
+      const text = onlyUser && !toolMode
+        ? (typeof messages[0].content === 'string' ? messages[0].content : buildPrompt(messages, []))
+        : buildPrompt(messages, toolList);
 
       const requestId = `chatcmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const created = Math.floor(Date.now() / 1000);
+
+      const abort = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+
+      const mkCalls = (calls: { name: string; arguments: string }[]) =>
+        calls.map((c, i) => ({
+          index: i,
+          id: `call_${Math.random().toString(36).slice(2, 10)}`,
+          type: 'function' as const,
+          function: { name: c.name, arguments: c.arguments },
+        }));
 
       if (stream) {
         res.setHeader('Content-Type', 'text/event-stream');
@@ -98,82 +135,97 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders?.();
 
-        const send = (obj: any) => {
-          res.write(`data: ${JSON.stringify(obj)}\n\n`);
+        const send = (delta: any, finish: string | null = null) => {
+          if (res.writableEnded) return;
+          res.write(`data: ${JSON.stringify({
+            id: requestId, object: 'chat.completion.chunk', created, model,
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`);
         };
+        const end = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
 
-        const abort = new AbortController();
-        req.on('close', () => abort.abort());
-
+        let full = '';
+        let sentText = '';
         await query(webChatId, {
           text,
           signal: abort.signal,
-          onDelta: (delta) => {
-            send({
-              id: requestId,
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
-            });
+          onDelta: (d) => {
+            full += d;
+            const cleaned = stripLabel(full);
+            const safe = toolMode ? cleaned.slice(0, streamableLength(cleaned)) : cleaned;
+            if (safe.length > sentText.length && safe.startsWith(sentText)) {
+              send({ content: safe.slice(sentText.length) });
+              sentText = safe;
+            }
           },
-          onDone: (_full) => {
-            send({
-              id: requestId,
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-            });
-            res.write('data: [DONE]\n\n');
-            res.end();
+          onDone: (finalText) => {
+            const finalClean = stripLabel(finalText || full);
+            if (toolMode) {
+              const parsed = parseReply(finalClean, toolNames);
+              if (parsed.content.startsWith(sentText) && parsed.content.length > sentText.length) {
+                send({ content: parsed.content.slice(sentText.length) });
+              } else if (!sentText && parsed.content) {
+                send({ content: parsed.content });
+              }
+              if (parsed.calls.length > 0) {
+                send({ tool_calls: mkCalls(parsed.calls) });
+                send({}, 'tool_calls');
+              } else {
+                send({}, 'stop');
+              }
+            } else {
+              if (finalClean.startsWith(sentText) && finalClean.length > sentText.length) {
+                send({ content: finalClean.slice(sentText.length) });
+              }
+              send({}, 'stop');
+            }
+            end();
           },
           onError: (err) => {
-            send({
-              id: requestId,
-              object: 'chat.completion.chunk',
-              created,
-              model,
-              choices: [{ index: 0, delta: { content: `\n\n[bridge error] ${err.message}` }, finish_reason: 'stop' }],
-            });
-            res.write('data: [DONE]\n\n');
-            res.end();
+            if (!abort.signal.aborted) send({ content: `\n\n[bridge error] ${err.message}` }, 'stop');
+            end();
           },
         });
       } else {
-        // Non-streaming: collect full response then return
-        let full = '';
-        const abort = new AbortController();
-        req.on('close', () => abort.abort());
-
         await query(webChatId, {
           text,
           signal: abort.signal,
-          onDelta: (d) => { full += d; },
-          onDone: (done) => {
+          onDelta: () => {},
+          onDone: (finalText) => {
+            const clean = stripLabel(finalText);
+            const parsed = toolMode ? parseReply(clean, toolNames) : { content: clean, calls: [] as { name: string; arguments: string }[] };
+            const message: any = { role: 'assistant', content: parsed.content || (parsed.calls.length ? null : '') };
+            if (parsed.calls.length > 0) message.tool_calls = mkCalls(parsed.calls).map(({ index: _i, ...c }) => c);
             res.json({
-              id: requestId,
-              object: 'chat.completion',
-              created,
-              model,
-              choices: [{ index: 0, message: { role: 'assistant', content: done }, finish_reason: 'stop' }],
+              id: requestId, object: 'chat.completion', created, model,
+              choices: [{ index: 0, message, finish_reason: parsed.calls.length ? 'tool_calls' : 'stop' }],
               usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
             });
           },
           onError: (err) => {
-            res.status(502).json({ error: { message: err.message, type: 'bridge_error' } });
+            if (!res.headersSent) res.status(502).json({ error: { message: err.message, type: 'bridge_error' } });
           },
         });
       }
     });
 
-    app.get('/health', (_req, res) => res.json({ ok: true, port: PORT }));
+    app.get('/health', (_req, res) => res.json({ ok: true, port: BRIDGE_PORT }));
 
-    server = app.listen(PORT, HOST, () => {
-      resolve({ ok: true, port: PORT });
+    app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      if (res.headersSent) return;
+      res.status(err?.status || 500).json({ error: { message: err?.message ?? 'Internal error', type: 'server_error' } });
     });
-    server.on('error', (err: any) => {
-      resolve({ ok: false, error: err?.message ?? String(err) });
+
+    server = app.listen(BRIDGE_PORT, HOST);
+    server.once('listening', () => resolve({ ok: true, port: BRIDGE_PORT }));
+    server.once('error', (err: any) => {
+      server = null;
+      resolve({
+        ok: false,
+        error: err?.code === 'EADDRINUSE'
+          ? `Port ${BRIDGE_PORT} is already in use. WebChat providers will not work until it is free.`
+          : err?.message ?? String(err),
+      });
     });
   });
 }

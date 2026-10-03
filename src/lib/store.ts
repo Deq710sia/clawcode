@@ -51,7 +51,40 @@ export interface PlanItem {
   status: 'pending' | 'in_progress' | 'done' | 'blocked';
 }
 
-function toApiMessages(msgs: ChatMessage[]): ApiMessage[] {
+/**
+ * If a turn was stopped (or the app crashed) between an assistant tool call and its
+ * result, the history contains a tool_call with no matching `tool` message. Providers
+ * reject that with HTTP 400, which would brick the conversation. Insert placeholders.
+ */
+function repairDangling(msgs: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    out.push(m);
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      const answered = new Set<string>();
+      for (let j = i + 1; j < msgs.length && msgs[j].role === 'tool'; j++) {
+        if (msgs[j].tool_call_id) answered.add(msgs[j].tool_call_id!);
+      }
+      for (const tc of m.tool_calls) {
+        if (!answered.has(tc.id)) {
+          out.push({
+            id: `repair_${tc.id}`,
+            role: 'tool',
+            content: JSON.stringify({ error: 'Tool call was cancelled before it completed.' }),
+            tool_call_id: tc.id,
+            name: tc.name,
+            createdAt: m.createdAt,
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function toApiMessages(rawMsgs: ChatMessage[]): ApiMessage[] {
+  const msgs = repairDangling(rawMsgs);
   return msgs
     .filter((m) => !(m.role === 'tool' && !m.content))
     .map((m) => ({
@@ -59,11 +92,13 @@ function toApiMessages(msgs: ChatMessage[]): ApiMessage[] {
       content: m.content,
       tool_call_id: m.tool_call_id,
       name: m.name,
-      tool_calls: m.tool_calls?.map((tc) => ({
-        id: tc.id,
-        type: 'function' as const,
-        function: { name: tc.name, arguments: JSON.stringify(tc.args) },
-      })),
+      tool_calls: m.tool_calls?.length
+        ? m.tool_calls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+          }))
+        : undefined,
     }));
 }
 
@@ -222,7 +257,9 @@ export const useClaw = create<ClawState>((set, get) => ({
       // Execute all tool calls emitted this round, push tool result messages.
       for (const call of pendingToolCallsForThisRound) {
         try {
-          const res = await window.claw.tool.invoke(call.name, call.args);
+          const res = call.args?.__parse_error
+            ? { ok: false as const, error: String(call.args.__parse_error), result: undefined }
+            : await window.claw.tool.invoke(call.name, call.args);
           const finished: ToolCall = {
             ...call,
             state: res.ok ? 'done' : 'error',

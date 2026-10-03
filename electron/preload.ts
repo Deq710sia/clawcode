@@ -1,5 +1,5 @@
 /**
- * ClawCode — preload script
+ * ClawCode — preload script (bundled as .cjs by scripts/build-preload.mjs).
  * Exposes a tight, audited `claw` API to the renderer via contextBridge.
  */
 import { contextBridge, ipcRenderer } from 'electron';
@@ -19,13 +19,29 @@ const api = {
   tool: {
     invoke: (name: string, args: any) => ipcRenderer.invoke('tool:invoke', name, args),
   },
-  shell: {
-    exec: (command: string, opts?: { cwd?: string; timeoutMs?: number }) =>
-      ipcRenderer.invoke('shell:exec', command, opts),
-  },
   app: {
     info: () => ipcRenderer.invoke('app:info'),
     openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+  },
+  net: {
+    request: (req: { id: string; url: string; method?: string; headers?: Record<string, string>; body?: string }) =>
+      ipcRenderer.invoke('net:request', req),
+    abort: (id: string) => ipcRenderer.invoke('net:abort', id),
+    onChunk: (cb: (id: string, chunk: Uint8Array) => void) => {
+      const h = (_e: any, id: string, chunk: Uint8Array) => cb(id, chunk);
+      ipcRenderer.on('net:chunk', h);
+      return () => ipcRenderer.removeListener('net:chunk', h);
+    },
+    onEnd: (cb: (id: string) => void) => {
+      const h = (_e: any, id: string) => cb(id);
+      ipcRenderer.on('net:end', h);
+      return () => ipcRenderer.removeListener('net:end', h);
+    },
+    onError: (cb: (id: string, message: string) => void) => {
+      const h = (_e: any, id: string, message: string) => cb(id, message);
+      ipcRenderer.on('net:error', h);
+      return () => ipcRenderer.removeListener('net:error', h);
+    },
   },
   providers: {
     list: () => ipcRenderer.invoke('providers:list'),

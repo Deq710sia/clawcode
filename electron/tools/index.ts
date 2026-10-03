@@ -7,7 +7,7 @@
  * Tools are sandboxed to the active workspace: any path argument is resolved
  * against the workspace root and rejected if it escapes.
  */
-import { IpcMain } from 'electron';
+import type { IpcMain } from 'electron';
 import {
   readFileSync,
   writeFileSync,
@@ -39,7 +39,7 @@ function safePath(ctx: ToolContext, p: string): string {
   const candidate = isAbsolute(p) ? p : join(ctx.workspace, p);
   const resolved = pathResolve(candidate);
   const rel = relative(ctx.workspace, resolved);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) {
     throw new Error(`Path escapes workspace: ${p}`);
   }
   return resolved;
@@ -160,6 +160,7 @@ const editFile: ToolDef = {
           properties: {
             old: { type: 'string' },
             new: { type: 'string' },
+            replaceAll: { type: 'boolean', description: 'Replace every occurrence instead of requiring a unique match.' },
           },
           required: ['old', 'new'],
         },
@@ -176,16 +177,29 @@ const editFile: ToolDef = {
     const failed: { old: string; reason: string }[] = [];
 
     for (const r of args.replacements ?? []) {
-      if (!original.includes(r.old)) {
-        failed.push({ old: r.old.slice(0, 80), reason: 'old string not found' });
+      if (typeof r?.old !== 'string' || typeof r?.new !== 'string' || r.old === '') {
+        failed.push({ old: String(r?.old ?? '').slice(0, 80), reason: '`old` and `new` must be strings and `old` must be non-empty' });
         continue;
       }
       if (r.old === r.new) {
         failed.push({ old: r.old.slice(0, 80), reason: 'old and new are identical' });
         continue;
       }
-      // Replace first occurrence only (deterministic)
-      updated = updated.replace(r.old, r.new);
+      // Match against the *current* text so sequential replacements compose correctly.
+      const first = updated.indexOf(r.old);
+      if (first === -1) {
+        failed.push({ old: r.old.slice(0, 80), reason: 'old string not found' });
+        continue;
+      }
+      if (!r.replaceAll && updated.indexOf(r.old, first + 1) !== -1) {
+        failed.push({ old: r.old.slice(0, 80), reason: 'old string is not unique; add more surrounding context or set replaceAll' });
+        continue;
+      }
+      // Use split/join, NOT String.replace: replace() interprets $&, $1, $$ in the
+      // replacement string, which silently corrupts code (template literals, regexes, shell).
+      updated = r.replaceAll
+        ? updated.split(r.old).join(r.new)
+        : updated.slice(0, first) + r.new + updated.slice(first + r.old.length);
       applied.push({ old: r.old, new: r.new });
     }
 
@@ -193,7 +207,6 @@ const editFile: ToolDef = {
       writeFileSync(full, updated, 'utf8');
     }
 
-    // Build a simple unified diff (no external deps)
     const diff = makeUnifiedDiff(args.path, original, updated);
 
     return {
@@ -221,13 +234,13 @@ const runCommand: ToolDef = {
     required: ['command'],
   },
   run: async (args, ctx) => {
-    // Check if process sandbox is enabled — if so, route through runCommandSandboxed
-    try {
-      const { loadSandboxConfig } = await import('../process-sandbox.js');
-      const cfg = loadSandboxConfig();
-      if (cfg.enabled && cfg.passwordCipher && ctx.workspace) {
-        const { runCommandSandboxed } = await import('../process-sandbox.js');
-        const result = await runCommandSandboxed(args.command, {
+    // If the process sandbox is enabled, commands MUST go through it. On any failure we
+    // return an error instead of falling back to unsandboxed execution (fail closed).
+    const sandbox = await import('../process-sandbox.js');
+    const sbCfg = sandbox.loadSandboxConfig();
+    if (sbCfg.enabled) {
+      try {
+        const result = await sandbox.runCommandSandboxed(args.command, {
           cwd: ctx.workspace,
           timeoutMs: args.timeoutMs,
         });
@@ -237,9 +250,14 @@ const runCommand: ToolDef = {
           stdout: result.stdout,
           stderr: result.stderr + '\n[sandboxed: ran as restricted user "ClawCodeSandbox"]',
         };
+      } catch (err: any) {
+        return {
+          ok: false,
+          error: `Process sandbox is enabled but the command was NOT run: ${err?.message ?? err}. Fix the sandbox in Settings → Sandbox or disable it.`,
+          stdout: '',
+          stderr: '',
+        };
       }
-    } catch {
-      // If sandbox module fails to load, fall through to normal execution
     }
 
     // Default: spawn directly (no sandbox)

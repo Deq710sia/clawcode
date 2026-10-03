@@ -11,7 +11,8 @@
  */
 import { app } from 'electron';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execSync, exec } from 'node:child_process';
 
 export interface SandboxConfig {
   /** Workspace folder to map into the sandbox (read-write) */
@@ -120,14 +121,10 @@ export function writeWsbFile(config: SandboxConfig): string {
  */
 export function isSandboxAvailable(): boolean {
   if (process.platform !== 'win32') return false;
-  try {
-    // Check if the WindowsSandbox optional feature is enabled
-    require('child_process').execSync('powershell -Command "Get-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM | Select-Object -ExpandProperty State"', { stdio: ['ignore', 'pipe', 'ignore'] });
-    const out = require('child_process').execSync('powershell -Command "Get-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM | Select-Object -ExpandProperty State"', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    return out.toLowerCase() === 'enabled';
-  } catch {
-    return false;
-  }
+  // Querying the optional feature needs admin rights, so just look for the executable
+  // that the feature installs (Windows 10/11 Pro, Enterprise, Education).
+  const sysRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+  return existsSync(join(sysRoot, 'System32', 'WindowsSandbox.exe'));
 }
 
 /**
@@ -139,7 +136,7 @@ export function launchSandbox(config: SandboxConfig): { ok: boolean; error?: str
     if (process.platform !== 'win32') {
       return { ok: false, error: 'Windows Sandbox only available on Windows 10/11 Pro+', wsbPath };
     }
-    require('child_process').exec(`start "" "${wsbPath}"`);
+    exec(`start "" "${wsbPath}"`);
     return { ok: true, wsbPath };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) };

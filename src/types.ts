@@ -218,14 +218,15 @@ declare global {
       tool: {
         invoke: (name: string, args: any) => Promise<{ ok: boolean; result?: any; error?: string }>;
       };
-      shell: {
-        exec: (command: string, opts?: { cwd?: string; timeoutMs?: number }) => Promise<{
-          ok: boolean;
-          exitCode?: number;
-          stdout?: string;
-          stderr?: string;
-          error?: string;
-        }>;
+      net: {
+        request: (req: { id: string; url: string; method?: string; headers?: Record<string, string>; body?: string }) => Promise<
+          | { ok: true; status: number; statusText: string; headers: Record<string, string> }
+          | { ok: false; error: string }
+        >;
+        abort: (id: string) => Promise<{ ok: boolean }>;
+        onChunk: (cb: (id: string, chunk: Uint8Array) => void) => () => void;
+        onEnd: (cb: (id: string) => void) => () => void;
+        onError: (cb: (id: string, message: string) => void) => () => void;
       };
       app: {
         info: () => Promise<AppInfo>;

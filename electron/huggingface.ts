@@ -9,7 +9,8 @@
 import { app } from 'electron';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
+import os from 'node:os';
 
 const modelsDir = () => join(app.getPath('userData'), 'models');
 
@@ -301,7 +302,7 @@ export async function deleteDownloadedModel(name: string): Promise<{ ok: boolean
 /** Check if huggingface-cli is on PATH. */
 export function probeHfCli(): boolean {
   try {
-    require('child_process').execSync('huggingface-cli --version', { stdio: ['ignore', 'pipe', 'ignore'] });
+    execSync('huggingface-cli --version', { stdio: ['ignore', 'pipe', 'ignore'] });
     return true;
   } catch { return false; }
 }
@@ -327,7 +328,6 @@ export interface GpuInfo {
 }
 
 export function detectHardware(): HardwareInfo {
-  const os = require('node:os');
   const info: HardwareInfo = {
     platform: process.platform,
     arch: process.arch,
@@ -340,8 +340,7 @@ export function detectHardware(): HardwareInfo {
 
   // NVIDIA via nvidia-smi (cross-platform)
   try {
-    const out = require('child_process')
-      .execSync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits', { stdio: ['ignore', 'pipe', 'ignore'] })
+    const out = execSync('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits', { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
       .trim();
     for (const line of out.split('\n')) {
@@ -359,8 +358,7 @@ export function detectHardware(): HardwareInfo {
   // Apple Silicon (macOS) — unified memory
   if (process.platform === 'darwin' && info.gpus.length === 0) {
     try {
-      const out = require('child_process')
-        .execSync('system_profiler SPHardwareDataType', { stdio: ['ignore', 'pipe', 'ignore'] })
+      const out = execSync('system_profiler SPHardwareDataType', { stdio: ['ignore', 'pipe', 'ignore'] })
         .toString();
       const chipMatch = out.match(/Chip:\s*(.+)/);
       const memMatch = out.match(/Memory:\s*(\d+)\s*GB/);
@@ -374,22 +372,23 @@ export function detectHardware(): HardwareInfo {
     } catch {}
   }
 
-  // Windows GPU via wmic (fallback if no nvidia-smi)
+  // Windows GPU via PowerShell/CIM (wmic is removed on recent Windows 11 builds).
   if (process.platform === 'win32' && info.gpus.length === 0) {
     try {
-      const out = require('child_process')
-        .execSync('wmic path win32_VideoController get name,AdapterRAM /format:csv', { stdio: ['ignore', 'pipe', 'ignore'] })
-        .toString();
-      for (const line of out.split('\n').slice(1)) {
-        const cells = line.split(',').map((s: string) => s.trim()).filter(Boolean);
-        if (cells.length >= 2 && cells[0]) {
-          const ram = parseInt(cells[0]) || 0;
-          info.gpus.push({
-            name: cells[1],
-            vramTotalBytes: ram > 0 ? ram : 0,
-            type: cells[1].toLowerCase().includes('amd') ? 'amd' : cells[1].toLowerCase().includes('intel') ? 'intel' : 'unknown',
-          });
-        }
+      const out = execSync(
+        'powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json -Compress"',
+        { stdio: ['ignore', 'pipe', 'ignore'] }
+      ).toString().trim();
+      const parsed = JSON.parse(out || '[]');
+      const list: { Name?: string; AdapterRAM?: number }[] = Array.isArray(parsed) ? parsed : [parsed];
+      for (const g of list) {
+        if (!g?.Name) continue;
+        const lower = g.Name.toLowerCase();
+        info.gpus.push({
+          name: g.Name,
+          vramTotalBytes: g.AdapterRAM && g.AdapterRAM > 0 ? g.AdapterRAM : 0,
+          type: lower.includes('nvidia') ? 'nvidia' : lower.includes('amd') || lower.includes('radeon') ? 'amd' : lower.includes('intel') ? 'intel' : 'unknown',
+        });
       }
     } catch {}
   }
@@ -397,8 +396,7 @@ export function detectHardware(): HardwareInfo {
   // Linux AMD/intel via lspci (last resort)
   if (process.platform === 'linux' && info.gpus.length === 0) {
     try {
-      const out = require('child_process')
-        .execSync('lspci | grep -iE "vga|3d|display"', { stdio: ['ignore', 'pipe', 'ignore'] })
+      const out = execSync('lspci | grep -iE "vga|3d|display"', { stdio: ['ignore', 'pipe', 'ignore'] })
         .toString();
       for (const line of out.split('\n')) {
         const name = line.split(':').slice(2).join(':').trim();

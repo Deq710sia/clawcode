@@ -29,8 +29,10 @@ export default function App() {
       };
       setConfig(defaulted);
       if (c.workspace) {
-        setWorkspace(c.workspace);
-        await window.claw.workspace.set(c.workspace);
+        // Tell the main process first; setWorkspace triggers a file-tree refresh that
+        // needs the main process to already know the workspace.
+        const r = await window.claw.workspace.set(c.workspace);
+        if (r.ok) setWorkspace(c.workspace);
       }
       // First-run welcome if no API key and no endpoint customization
       if (!c.hasApiKey && !c.endpoint) {

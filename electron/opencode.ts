@@ -6,8 +6,8 @@
  * If `opencode` is not on PATH, this module reports not-installed and the UI
  * falls back to ClawCode's built-in agent loop.
  */
-import { spawn, ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawn, execSync, ChildProcess } from 'node:child_process';
+import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
 
@@ -38,8 +38,7 @@ function findOpenCodeBinary(): string | null {
       : ['opencode'];
   for (const c of candidates) {
     try {
-      const path = require('child_process')
-        .execSync(`${process.platform === 'win32' ? 'where' : 'which'} ${c}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+      const path = execSync(`${process.platform === 'win32' ? 'where' : 'which'} ${c}`, { stdio: ['ignore', 'pipe', 'ignore'] })
         .toString()
         .trim()
         .split(/\r?\n/)[0];
@@ -57,8 +56,7 @@ export function probeOpenCode(): OpenCodeStatus {
   }
   let version = '';
   try {
-    version = require('child_process')
-      .execSync(`"${path}" --version`, { stdio: ['ignore', 'pipe', 'ignore'] })
+    version = execSync(`"${path}" --version`, { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
       .trim();
   } catch {}
@@ -97,17 +95,16 @@ export async function startOpenCode(opts: OpenCodeOpts): Promise<OpenCodeStatus>
   const logDir = join(app.getPath('userData'), 'logs');
   mkdirSync(logDir, { recursive: true });
   const logFile = join(logDir, 'opencode.log');
-  const logStream = writeFileSync.bind(null, logFile, '');
 
   ocProcess.stdout?.on('data', (d) => {
     const line = d.toString();
-    try { require('fs').appendFileSync(logFile, line); } catch {}
+    try { appendFileSync(logFile, line); } catch {}
     if (line.includes('listening') || line.includes('ready') || line.includes('started')) {
       ocStatus = { ...probe, running: true, port, pid: ocProcess?.pid };
     }
   });
   ocProcess.stderr?.on('data', (d) => {
-    try { require('fs').appendFileSync(logFile, d.toString()); } catch {}
+    try { appendFileSync(logFile, d.toString()); } catch {}
   });
   ocProcess.on('exit', (code) => {
     ocStatus = { ...probe, running: false, lastError: code !== 0 ? `exited with code ${code}` : undefined };

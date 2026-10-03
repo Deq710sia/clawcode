@@ -3,16 +3,15 @@
  * Clean-room implementation. No third-party agent runtime; all tools are
  * implemented from scratch using only Node's standard libraries.
  */
-import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, net } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as pathResolve, relative, normalize, isAbsolute } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync, renameSync } from 'node:fs';
-import { spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 
 import { registerTools, handleToolCall } from './tools/index.js';
 import { initBridge, getAllProfiles, login as webchatLogin, closeAllSessions, resetWebChat, getBridgeStatus, type WebChatId } from './webchat/bridge.js';
-import { startBridgeServer, stopBridgeServer } from './webchat/server.js';
+import { startBridgeServer, stopBridgeServer, BRIDGE_PORT, BRIDGE_TOKEN, BRIDGE_TOKEN_HEADER } from './webchat/server.js';
 import { probeOpenCode, startOpenCode, stopOpenCode, getOpenCodeStatus, proxyToOpenCode } from './opencode.js';
 import { PROVIDERS } from './providers/index.js';
 import * as Skills from './skills/index.js';
@@ -26,6 +25,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
+
+// Where Playwright looks for Chromium. Packaged: the copy bundled in resources/browsers
+// (see build.extraResources). Dev: "0" = node_modules/playwright-core/.local-browsers,
+// which is where `postinstall` downloads it. Must be set before playwright is first imported.
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = app.isPackaged ? join(process.resourcesPath, 'browsers') : '0';
+}
+
 const userDataDir = app.getPath('userData');
 const configFile = join(userDataDir, 'clawcode.config.json');
 
@@ -43,6 +50,13 @@ if (!gotLock) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -62,10 +76,10 @@ function createWindow() {
     },
     frame: process.platform === 'darwin',
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false,
     },
   });
@@ -149,6 +163,12 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send('updater:state', { state: 'downloaded', version: info?.version });
     }
   });
+
+  // Restore the last workspace in the main process so tools work immediately,
+  // independent of when the renderer finishes bootstrapping.
+  const wsArg = process.argv.find((a) => a.startsWith('--workspace='))?.slice('--workspace='.length);
+  const savedWs = wsArg || loadConfig().workspace;
+  if (savedWs && existsSync(savedWs)) state.workspace = savedWs;
 
   registerTools(ipcMain, {
     pwd: () => state.workspace,
@@ -340,36 +360,67 @@ function registerIpc() {
     }
   });
 
-  // Native shell execution for the bash tool
-  ipcMain.handle('shell:exec', async (_e, command: string, opts?: { cwd?: string; timeoutMs?: number }) => {
-    const cwd = opts?.cwd && isAbsolute(opts.cwd) ? opts.cwd : state.workspace;
-    if (!cwd) return { ok: false, error: 'No workspace set' };
-    return new Promise((resolve) => {
-      const isWin = process.platform === 'win32';
-      const child = spawn(command, {
-        cwd,
-        shell: isWin ? 'powershell.exe' : '/bin/bash',
-        env: process.env,
-        windowsHide: true,
-      });
-      let stdout = '';
-      let stderr = '';
-      const timeout = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch {}
-        stderr += '\n[ClawCode] process timed out';
-      }, Math.min(opts?.timeoutMs ?? 120_000, 600_000));
+  // ----- Network proxy for LLM calls -----
+  // The renderer is served from file:// (origin "null"), so direct fetch() to most
+  // LLM APIs is blocked by CORS. Requests are made here instead, via Chromium's
+  // network stack (honours system proxy settings).
+  const netControllers = new Map<string, AbortController>();
 
-      child.stdout.on('data', (d) => (stdout += d.toString()));
-      child.stderr.on('data', (d) => (stderr += d.toString()));
-      child.on('error', (err) => {
-        clearTimeout(timeout);
-        resolve({ ok: false, error: err.message, stdout, stderr });
+  ipcMain.handle('net:request', async (e, req: { id: string; url: string; method?: string; headers?: Record<string, string>; body?: string }) => {
+    const sender = e.sender;
+    let url: URL;
+    try {
+      url = new URL(req.url);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed');
+    } catch (err: any) {
+      return { ok: false as const, error: err?.message ?? 'Invalid URL' };
+    }
+    const ctrl = new AbortController();
+    netControllers.set(req.id, ctrl);
+    // Requests to our own WebChat bridge carry the per-launch token.
+    const headers: Record<string, string> = { ...(req.headers ?? {}) };
+    if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.port === String(BRIDGE_PORT)) {
+      headers[BRIDGE_TOKEN_HEADER] = BRIDGE_TOKEN;
+    }
+    try {
+      const res = await net.fetch(url.toString(), {
+        method: req.method ?? 'GET',
+        headers,
+        body: req.body,
+        signal: ctrl.signal,
       });
-      child.on('close', (code) => {
-        clearTimeout(timeout);
-        resolve({ ok: code === 0, exitCode: code, stdout, stderr });
+      const resHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => { resHeaders[k] = v; });
+
+      setImmediate(async () => {
+        try {
+          if (res.body) {
+            const reader = res.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (sender.isDestroyed()) { ctrl.abort(); break; }
+              sender.send('net:chunk', req.id, value);
+            }
+          }
+          if (!sender.isDestroyed()) sender.send('net:end', req.id);
+        } catch (err: any) {
+          if (!sender.isDestroyed()) sender.send('net:error', req.id, err?.name === 'AbortError' ? 'aborted' : (err?.message ?? String(err)));
+        } finally {
+          netControllers.delete(req.id);
+        }
       });
-    });
+      return { ok: true as const, status: res.status, statusText: res.statusText, headers: resHeaders };
+    } catch (err: any) {
+      netControllers.delete(req.id);
+      return { ok: false as const, error: err?.name === 'AbortError' ? 'aborted' : (err?.cause?.message ? `${err.message}: ${err.cause.message}` : (err?.message ?? String(err))) };
+    }
+  });
+
+  ipcMain.handle('net:abort', (_e, id: string) => {
+    netControllers.get(id)?.abort();
+    netControllers.delete(id);
+    return { ok: true };
   });
 
   ipcMain.handle('app:info', () => ({
@@ -398,7 +449,7 @@ function registerIpc() {
   ipcMain.handle('webchat:status', () => getBridgeStatus());
   ipcMain.handle('webchat:login', async (_e, id: WebChatId) => webchatLogin(id));
   ipcMain.handle('webchat:reset', async (_e, id: WebChatId) => { await resetWebChat(id); return { ok: true }; });
-  ipcMain.handle('webchat:bridgeUrl', () => 'http://127.0.0.1:7777/v1');
+  ipcMain.handle('webchat:bridgeUrl', () => `http://127.0.0.1:${BRIDGE_PORT}/v1`);
 
   // ----- OpenCode -----
   ipcMain.handle('opencode:probe', () => probeOpenCode());

@@ -1,21 +1,22 @@
 {
   "name": "clawcode",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "ClawCode — universal agentic harness (Electron + OpenCode + WebChat Bridge)",
   "author": "ClawCode",
   "license": "MIT",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n VITE,ELECTRON -c magenta,cyan \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 tsc -p electron/tsconfig.json && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "dev": "concurrently -k -n VITE,ELECTRON -c magenta,cyan \"vite\" \"wait-on tcp:127.0.0.1:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "dev:vite": "vite",
-    "build": "tsc -p electron/tsconfig.json && vite build",
+    "build:electron": "tsc -p electron/tsconfig.json && node scripts/build-preload.mjs",
+    "build": "npm run build:electron && vite build",
     "preview": "vite preview",
     "dist": "npm run build && electron-builder --win --x64",
     "dist:portable": "npm run build && electron-builder --win portable --x64",
     "dist:nsis": "npm run build && electron-builder --win nsis --x64",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json",
-    "postinstall": "playwright install chromium"
+    "postinstall": "cross-env PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -27,6 +28,7 @@
     "cross-env": "^7.0.3",
     "electron": "^29.0.0",
     "electron-builder": "^24.13.3",
+    "esbuild": "^0.21.5",
     "typescript": "^5.3.3",
     "vite": "^5.1.0",
     "vite-plugin-electron": "^0.28.0",
@@ -65,11 +67,12 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "build/**/*"
+      "build/**/*",
+      "!node_modules/playwright-core/.local-browsers{,/**}"
     ],
     "extraResources": [
       {
-        "from": "node_modules/playwright-core/lib/.local-browsers",
+        "from": "node_modules/playwright-core/.local-browsers",
         "to": "browsers",
         "filter": ["**/*"]
       }
