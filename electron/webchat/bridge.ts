@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { initProfiles, getProfile, getAllProfiles, setLoggedIn, getProfileDir, resetProfile, WebChatId } from './profiles.js';
 import { BaseDriver } from './drivers/base.js';
+import type { ChatState } from './continuation.js';
 import { ClaudeDriver } from './drivers/claude.js';
 import { ChatGPTDriver } from './drivers/chatgpt.js';
 import { GeminiDriver } from './drivers/gemini.js';
@@ -52,6 +53,13 @@ interface ActiveSession {
   context: any; // BrowserContext
   page: any; // Page
   busy: boolean;
+  /** What the open web chat already contains, and where it lives. Dropped with the session. */
+  chat?: ChatState & { url: string };
+}
+
+/** Thrown before anything is sent when a chat cannot be continued; the caller starts a fresh chat instead. */
+export class ContinuationUnavailable extends Error {
+  constructor(reason: string) { super(`continuation unavailable: ${reason}`); this.name = 'ContinuationUnavailable'; }
 }
 
 const sessions = new Map<string, ActiveSession>();
@@ -105,6 +113,8 @@ async function launchSession(id: WebChatId, headless: boolean, profileDirOverrid
   }
 
   const page = context.pages()[0] ?? (await context.newPage());
+  // Needed by the drivers' paste fallback for editors that mangle filled multi-line text.
+  try { await context.grantPermissions(['clipboard-read', 'clipboard-write']); } catch {}
   await page.goto(driver.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
   await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
 
@@ -160,8 +170,29 @@ export async function goHeadless(id: WebChatId, key?: string, profileDirOverride
   sessions.set(sessionKey, session);
 }
 
+export function getChatState(key: string): ChatState | undefined {
+  const c = sessions.get(key)?.chat;
+  return c ? { head: c.head, sigs: c.sigs } : undefined;
+}
+
+export function setChatState(key: string, state: ChatState | undefined) {
+  const s = sessions.get(key);
+  if (!s) return;
+  s.chat = state ? { ...state, url: s.chat?.url ?? '' } : undefined;
+  if (state) {
+    try { s.chat!.url = s.page.url(); } catch { s.chat = undefined; }
+  }
+}
+
+export function clearChatState(key: string) {
+  const s = sessions.get(key);
+  if (s) s.chat = undefined;
+}
+
 export interface QueryOpts {
   text: string;
+  /** Send `text` into the already-open chat instead of starting a new one. */
+  continueChat?: boolean;
   onDelta: (text: string) => void;
   onDone: (fullText: string) => void;
   onError: (err: Error) => void;
@@ -192,16 +223,25 @@ export async function query(id: WebChatId, opts: QueryOpts, accountId?: string, 
     if (session.busy) return fail(new Error(`${id} session is busy with another query`));
     session.busy = true;
 
-    // Every request starts a fresh conversation. The bridge is stateless like any
-    // OpenAI-compatible API: the caller sends the full history each time.
-    await session.page.goto(session.driver.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-    await session.page.waitForTimeout(1200);
-    if (!(await session.driver.isLoggedIn(session.page).catch(() => false))) {
-      setLoggedIn(id, false);
-      session.busy = false;
-      return fail(new Error(`Your ${id} session is not logged in (expired, or a bot-check page is showing). Log in again from Settings → Web Chats.`));
+    if (opts.continueChat) {
+      // Continue in place: no navigation. Verify we are really still in the chat we think we are.
+      const here = (() => { try { return session.page.url(); } catch { return ''; } })();
+      if (!session.chat || !session.chat.url || here !== session.chat.url || !(await session.driver.hasConversation(session.page).catch(() => false))) {
+        session.busy = false;
+        return fail(new ContinuationUnavailable('chat page changed or closed'));
+      }
+    } else {
+      // Fresh conversation: the caller sends the full transcript.
+      session.chat = undefined;
+      await session.page.goto(session.driver.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await session.page.waitForTimeout(1200);
+      if (!(await session.driver.isLoggedIn(session.page).catch(() => false))) {
+        setLoggedIn(id, false);
+        session.busy = false;
+        return fail(new Error(`Your ${id} session is not logged in (expired, or a bot-check page is showing). Log in again from Settings → Web Chats.`));
+      }
+      await session.driver.prepare(session.page);
     }
-    await session.driver.prepare(session.page);
 
     const active = session;
     await new Promise<void>((resolve) => {

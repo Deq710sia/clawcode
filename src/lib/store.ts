@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ChatMessage, ToolCall, FileEntry, PublicConfig, InstalledSkill, AccountProfile, SavedConversation } from '../types';
 import { streamChat, type ChatStreamEvent, type ApiMessage } from './api';
+import { formatToolResult } from './toolformat';
 
 interface PendingDiff {
   id: string;
@@ -96,7 +97,7 @@ function repairDangling(msgs: ChatMessage[]): ChatMessage[] {
           out.push({
             id: `repair_${tc.id}`,
             role: 'tool',
-            content: JSON.stringify({ error: 'Tool call was cancelled before it completed.' }),
+            content: 'Error: Tool call was cancelled before it completed.',
             tool_call_id: tc.id,
             name: tc.name,
             createdAt: m.createdAt,
@@ -385,7 +386,7 @@ export const useClaw = create<ClawState>((set, get) => ({
           const toolMsg: ChatMessage = {
             id: uuid(),
             role: 'tool',
-            content: JSON.stringify(res.ok ? res.result : { error: res.error }, null, 2),
+            content: formatToolResult(call.name, res.ok, res.result, res.error),
             tool_call_id: call.id,
             name: call.name,
             createdAt: Date.now(),
@@ -435,7 +436,7 @@ export const useClaw = create<ClawState>((set, get) => ({
           const toolMsg: ChatMessage = {
             id: uuid(),
             role: 'tool',
-            content: JSON.stringify({ error: err?.message ?? String(err) }),
+            content: formatToolResult(call.name, false, undefined, err?.message ?? String(err)),
             tool_call_id: call.id,
             name: call.name,
             createdAt: Date.now(),

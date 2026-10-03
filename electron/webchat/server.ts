@@ -13,8 +13,9 @@
  */
 import express from 'express';
 import { randomBytes } from 'node:crypto';
-import { query, getBridgeStatus, type WebChatId } from './bridge.js';
-import { buildPrompt, parseReply, type OAIMessage, type OAITool } from './toolprotocol.js';
+import { query, getBridgeStatus, getChatState, setChatState, clearChatState, type WebChatId } from './bridge.js';
+import { buildPrompt, buildContinuationPrompt, parseReply, type OAIMessage, type OAITool } from './toolprotocol.js';
+import { planTurn, nextState } from './continuation.js';
 
 export const BRIDGE_PORT = 7777;
 const HOST = '127.0.0.1';
@@ -111,9 +112,13 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
       const toolMode = toolList.length > 0;
 
       const onlyUser = messages.length === 1 && messages[0].role === 'user';
-      const text = onlyUser && !toolMode
+      const freshText = onlyUser && !toolMode
         ? (typeof messages[0].content === 'string' ? messages[0].content : buildPrompt(messages, []))
         : buildPrompt(messages, toolList);
+
+      // Continue the open web chat (send only what is new) when this request extends the previous one exactly.
+      const plan = onlyUser && !toolMode ? { mode: 'fresh' as const, deltaStart: 0 } : planTurn(getChatState(webChatId), messages, toolList);
+      const textFor = (mode: 'continue' | 'fresh') => (mode === 'continue' ? buildContinuationPrompt(messages, plan.deltaStart) : freshText);
 
       const requestId = `chatcmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const created = Math.floor(Date.now() / 1000);
@@ -128,6 +133,40 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
           type: 'function' as const,
           function: { name: c.name, arguments: c.arguments },
         }));
+
+      /**
+       * Run one turn. A failed continuation (page moved, site changed) is retried ONCE as a fresh chat with the
+       * full transcript, but only if nothing was shown yet. Any failure drops the chat state, so the next request
+       * starts clean instead of building on a half-finished site conversation.
+       */
+      const run = async (
+        mode: 'continue' | 'fresh',
+        h: { started: () => boolean; reset?: () => void; onDelta: (d: string) => void; onDone: (finalText: string) => void; onError: (e: Error) => void },
+      ): Promise<void> => {
+        let failure: Error | null = null;
+        await query(webChatId, {
+          text: textFor(mode),
+          continueChat: mode === 'continue',
+          signal: abort.signal,
+          onDelta: h.onDelta,
+          onDone: h.onDone,
+          onError: (e) => { failure = e; },
+        });
+        if (failure) {
+          clearChatState(webChatId);
+          if (mode === 'continue' && !abort.signal.aborted && !h.started()) {
+            h.reset?.();
+            return run('fresh', h);
+          }
+          h.onError(failure);
+        }
+      };
+
+      /** Remember what the site's chat now contains, so the next request can continue it. */
+      const remember = (reply: { content: string; calls: { name: string; arguments: string }[] }) => {
+        if (!reply.content.trim() && reply.calls.length === 0) clearChatState(webChatId);
+        else setChatState(webChatId, nextState(messages, toolList, reply));
+      };
 
       if (stream) {
         res.setHeader('Content-Type', 'text/event-stream');
@@ -146,9 +185,10 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
 
         let full = '';
         let sentText = '';
-        await query(webChatId, {
-          text,
-          signal: abort.signal,
+        const reset = () => { full = ''; sentText = ''; };
+        await run(plan.mode, {
+          started: () => sentText.length > 0,
+          reset,
           onDelta: (d) => {
             full += d;
             const cleaned = stripLabel(full);
@@ -167,6 +207,7 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
               } else if (!sentText && parsed.content) {
                 send({ content: parsed.content });
               }
+              remember(parsed);
               if (parsed.calls.length > 0) {
                 send({ tool_calls: mkCalls(parsed.calls) });
                 send({}, 'tool_calls');
@@ -177,23 +218,28 @@ export function startBridgeServer(): Promise<{ ok: boolean; port?: number; error
               if (finalClean.startsWith(sentText) && finalClean.length > sentText.length) {
                 send({ content: finalClean.slice(sentText.length) });
               }
+              remember({ content: finalClean, calls: [] });
               send({}, 'stop');
             }
             end();
           },
           onError: (err) => {
-            if (!abort.signal.aborted) send({ content: `\n\n[bridge error] ${err.message}` }, 'stop');
+            reset();
+            // A real stream error (not assistant text): the client shows it as an error and nothing is added to history.
+            if (!abort.signal.aborted && !res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ error: { message: err.message, type: 'bridge_error' } })}\n\n`);
+            }
             end();
           },
         });
       } else {
-        await query(webChatId, {
-          text,
-          signal: abort.signal,
+        await run(plan.mode, {
+          started: () => false,
           onDelta: () => {},
           onDone: (finalText) => {
             const clean = stripLabel(finalText);
             const parsed = toolMode ? parseReply(clean, toolNames) : { content: clean, calls: [] as { name: string; arguments: string }[] };
+            remember(parsed);
             const message: any = { role: 'assistant', content: parsed.content || (parsed.calls.length ? null : '') };
             if (parsed.calls.length > 0) message.tool_calls = mkCalls(parsed.calls).map(({ index: _i, ...c }) => c);
             res.json({

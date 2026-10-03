@@ -4,6 +4,7 @@
  * logic so the per-site drivers only need to describe their selectors.
  */
 import type { Page } from 'playwright';
+import { domToMarkdown } from './dom-markdown.js';
 
 export interface SendMessageOpts {
   text: string;
@@ -30,6 +31,11 @@ export abstract class BaseDriver {
 
   async prepare(_page: Page): Promise<void> {}
 
+  /** True when the open page already shows an assistant reply (so a follow-up can be typed into it). */
+  async hasConversation(page: Page): Promise<boolean> {
+    return (await page.$$(this.selectors.assistantMessage)).length > 0;
+  }
+
   async sendMessage(page: Page, opts: SendMessageOpts): Promise<void> {
     const { text, onDelta, onDone, onError, signal } = opts;
     const sel = this.selectors;
@@ -43,7 +49,24 @@ export abstract class BaseDriver {
       const baseline = (await page.$$(sel.assistantMessage)).length;
 
       await composer.click();
-      await composer.fill(text);
+
+      // Plain <textarea>/<input> composers take fill() directly. Rich contenteditable editors
+      // (Claude's ProseMirror, Gemini's editor) can collapse newlines out of filled text, which
+      // would silently corrupt multi-line prompts. Verify what landed; on mismatch, paste instead.
+      const plain = await composer.evaluate((el: any) => el.tagName === 'TEXTAREA' || el.tagName === 'INPUT').catch(() => false);
+      let typed = false;
+      if (plain) {
+        await composer.fill(text);
+        typed = true;
+      } else {
+        await composer.fill(text).catch(() => {});
+        typed = await this.textLanded(composer, text);
+        if (!typed) {
+          await this.pasteIntoEditor(page, text);
+          typed = await this.textLanded(composer, text);
+          if (!typed) throw new Error(`Could not enter the message into ${this.label}. The editor refused the text; the site layout may have changed.`);
+        }
+      }
       await wait(250, signal);
 
       let sent = false;
@@ -70,6 +93,28 @@ export abstract class BaseDriver {
       onDone(final);
     } catch (err: any) {
       onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  /** True when the editable holds (approximately) the text we tried to enter. */
+  private async textLanded(composer: any, text: string): Promise<boolean> {
+    const got = await composer.evaluate((el: any) => String(el.textContent ?? el.value ?? '')).catch(() => null);
+    if (got == null) return true; // cannot read the editor — assume it worked, as before this check existed
+    return Math.abs(got.length - text.length) <= Math.max(80, Math.floor(text.length * 0.05));
+  }
+
+  /** Paste via the clipboard API; every chat editor handles pasted multi-line text like a user paste. */
+  private async pasteIntoEditor(page: Page, text: string): Promise<void> {
+    try {
+      const wrote = await page.evaluate(async (t: string) => {
+        try { await (globalThis as any).navigator.clipboard.writeText(t); return true; } catch { return false; }
+      }, text);
+      if (!wrote) return;
+      await page.keyboard.press('Control+A');
+      await page.keyboard.press('Control+V');
+      await page.waitForTimeout(150);
+    } catch {
+      // Clipboard unavailable — the text that fill() did land is our best effort.
     }
   }
 }
@@ -108,15 +153,24 @@ export async function watchReply(page: Page, o: WatchOpts): Promise<string> {
     const bubbles = await page.$$(o.assistantSelector);
     let text = '';
     if (bubbles.length > o.baseline) {
-      text = (await bubbles[bubbles.length - 1].innerText().catch(() => '')).replace(/\r\n/g, '\n').trim();
+      const bubble = bubbles[bubbles.length - 1];
+      // DOM → markdown (code fences, list markers, emphasis, KaTeX) instead of innerText's
+      // flattened text. innerText stays as the fallback: it beats an empty string.
+      const raw = await bubble.evaluate(domToMarkdown).catch(() =>
+        bubble.innerText().catch(() => '')
+      );
+      text = String(raw).replace(/\r\n/g, '\n').trim();
     }
 
     if (text && text !== latest) {
       latest = text;
       lastChangeAt = now;
-      if (text.startsWith(emitted)) {
-        const delta = text.slice(emitted.length);
-        if (delta) { o.onDelta(delta); emitted = text; }
+      // Stream only complete lines: the markdown shape of the line still being typed can
+      // change (list marker, fence, emphasis), which would garble a mid-line cut.
+      const safe = text.slice(0, text.lastIndexOf('\n') + 1);
+      if (safe.length > emitted.length && safe.startsWith(emitted)) {
+        o.onDelta(safe.slice(emitted.length));
+        emitted = safe;
       }
     }
 

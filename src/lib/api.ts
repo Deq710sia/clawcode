@@ -515,6 +515,11 @@ export async function streamChat(opts: StreamChatOpts) {
         }
         try {
           const json = JSON.parse(data);
+          if (json.error) {
+            // Providers (and the WebChat bridge) can report failures inside the stream after headers were sent.
+            opts.onEvent({ type: 'error', message: String(json.error.message ?? json.error).slice(0, 500) });
+            return;
+          }
           const choice = json.choices?.[0];
           if (!choice) continue;
           const delta = choice.delta ?? {};

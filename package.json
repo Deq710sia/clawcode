@@ -16,7 +16,7 @@
     "dist:portable": "npm run build && electron-builder --win portable --x64",
     "dist:nsis": "npm run build && electron-builder --win nsis --x64",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p electron/tsconfig.json",
-    "test": "node tests/tools.mjs && node tests/agent-loop.mjs"
+    "test": "node tests/tools.mjs && node tests/agent-loop.mjs && node tests/webchat.mjs"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
@@ -29,6 +29,7 @@
     "electron": "^29.0.0",
     "electron-builder": "^24.13.3",
     "esbuild": "^0.21.5",
+    "linkedom": "^0.18.13",
     "typescript": "^5.3.3",
     "vite": "^5.1.0",
     "vite-plugin-electron": "^0.28.0",

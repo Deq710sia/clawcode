@@ -20,22 +20,31 @@ export interface OAITool { type?: string; function?: { name: string; description
 export interface ParsedCall { name: string; arguments: string }
 export interface ParsedReply { content: string; calls: ParsedCall[] }
 
-const MAX_TOOL_RESULT_CHARS = 8000;
+// Tools already cap their own output (read_file 60k, run_command 200k); this is only a safety net,
+// and it says so instead of silently dropping the middle.
+const MAX_TOOL_RESULT_CHARS = 64_000;
 const MAX_PROMPT_CHARS = 80_000;
 
-function contentToText(c: unknown): string {
+export function contentToText(c: unknown): string {
   if (typeof c === 'string') return c;
   if (Array.isArray(c)) return c.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join('\n');
   return c == null ? '' : String(c);
 }
 
+function typeOf(v: any): string {
+  if (Array.isArray(v?.enum) && v.enum.length) return v.enum.map((e: unknown) => JSON.stringify(e)).join('|');
+  if (v?.type === 'array') return `${typeOf(v.items ?? {})}[]`;
+  return v?.type ?? 'any';
+}
+
+/** `name(a: type, b?: "x"|"y")` plus one-line description; param descriptions only when short and useful. */
 function compactSignature(tool: OAITool): string {
   const f = tool.function!;
   const props = f.parameters?.properties ?? {};
   const required = new Set<string>(f.parameters?.required ?? []);
   const args = Object.entries(props).map(([k, v]: [string, any]) => {
-    const t = v?.type === 'array' ? `array of ${v?.items?.type ?? 'any'}` : v?.type ?? 'any';
-    return `${k}${required.has(k) ? '' : '?'}: ${t}`;
+    const note = typeof v?.description === 'string' && v.description.length <= 90 ? ` /* ${v.description} */` : '';
+    return `${k}${required.has(k) ? '' : '?'}: ${typeOf(v)}${note}`;
   });
   return `${f.name}(${args.join(', ')})${f.description ? ` — ${f.description}` : ''}`;
 }
@@ -46,32 +55,55 @@ function renderCall(name: string, args: string): string {
   return '```json\n' + JSON.stringify({ tool_call: { name, arguments: parsed } }) + '\n```';
 }
 
+function clipResult(body: string): string {
+  if (body.length <= MAX_TOOL_RESULT_CHARS) return body;
+  const head = Math.floor(MAX_TOOL_RESULT_CHARS * 0.7);
+  const tail = Math.floor(MAX_TOOL_RESULT_CHARS * 0.25);
+  return `${body.slice(0, head)}\n[… ${body.length - head - tail} characters omitted …]\n${body.slice(-tail)}`;
+}
+
+function toolNameIndex(messages: OAIMessage[]): Map<string, string> {
+  const nameById = new Map<string, string>();
+  for (const m of messages) for (const tc of m.tool_calls ?? []) if (tc.id && tc.function?.name) nameById.set(tc.id, tc.function.name);
+  return nameById;
+}
+
+function renderTurn(m: OAIMessage, nameById: Map<string, string>): string {
+  if (m.role === 'user') return `[User]\n${contentToText(m.content)}`;
+  if (m.role === 'assistant') {
+    const parts: string[] = [];
+    const text = contentToText(m.content).trim();
+    if (text) parts.push(text);
+    for (const tc of m.tool_calls ?? []) parts.push(renderCall(tc.function?.name ?? 'unknown', tc.function?.arguments ?? '{}'));
+    return `[Assistant]\n${parts.join('\n')}`;
+  }
+  if (m.role === 'tool') {
+    const name = m.name || (m.tool_call_id && nameById.get(m.tool_call_id)) || 'tool';
+    return `[Tool result: ${name}]\n${clipResult(contentToText(m.content))}`;
+  }
+  return `[${m.role}]\n${contentToText(m.content)}`;
+}
+
+/**
+ * Prompt for a CONTINUED web chat: the site already has the system instructions, tool protocol and
+ * earlier turns, so send only what is new. A lone user message goes through verbatim, exactly as if
+ * the user had typed it into the site.
+ */
+export function buildContinuationPrompt(messages: OAIMessage[], deltaStart: number): string {
+  const convo = messages.filter((m) => m.role !== 'system');
+  const delta = convo.slice(deltaStart);
+  if (delta.length === 1 && delta[0].role === 'user') return contentToText(delta[0].content);
+  const nameById = toolNameIndex(convo);
+  return delta.map((m) => renderTurn(m, nameById)).join('\n\n');
+}
+
 export function buildPrompt(messages: OAIMessage[], tools: OAITool[] = []): string {
   const system = messages.filter((m) => m.role === 'system').map((m) => contentToText(m.content)).join('\n\n');
   const convo = messages.filter((m) => m.role !== 'system');
 
-  const nameById = new Map<string, string>();
-  for (const m of convo) for (const tc of m.tool_calls ?? []) if (tc.id && tc.function?.name) nameById.set(tc.id, tc.function.name);
+  const nameById = toolNameIndex(convo);
 
-  const turns: string[] = convo.map((m) => {
-    if (m.role === 'user') return `[User]\n${contentToText(m.content)}`;
-    if (m.role === 'assistant') {
-      const parts: string[] = [];
-      const text = contentToText(m.content).trim();
-      if (text) parts.push(text);
-      for (const tc of m.tool_calls ?? []) parts.push(renderCall(tc.function?.name ?? 'unknown', tc.function?.arguments ?? '{}'));
-      return `[Assistant]\n${parts.join('\n')}`;
-    }
-    if (m.role === 'tool') {
-      let body = contentToText(m.content);
-      if (body.length > MAX_TOOL_RESULT_CHARS) {
-        body = body.slice(0, MAX_TOOL_RESULT_CHARS * 0.7) + '\n…[truncated]…\n' + body.slice(-MAX_TOOL_RESULT_CHARS * 0.25);
-      }
-      const name = m.name || (m.tool_call_id && nameById.get(m.tool_call_id)) || 'tool';
-      return `[Tool result: ${name}]\n${body}`;
-    }
-    return `[${m.role}]\n${contentToText(m.content)}`;
-  });
+  const turns: string[] = convo.map((m) => renderTurn(m, nameById));
 
   const header: string[] = [
     "You are the language model inside an agentic coding assistant. Follow the SYSTEM INSTRUCTIONS and write the Assistant's next message in the CONVERSATION below. Reply with only that message (do not repeat the [Assistant] label).",
@@ -94,14 +126,7 @@ export function buildPrompt(messages: OAIMessage[], tools: OAITool[] = []): stri
       '- Arguments must be valid JSON (escape newlines inside strings as \\n, quotes as \\").',
       '- If no tool is needed, just answer in plain text and output no tool_call block.',
       '',
-      'CRITICAL — CONVERSATIONAL SYNTHESIS:',
-      '- After receiving [Tool result: ...] entries, you MUST write a natural language response',
-      '  explaining what you found, what you did, and what it means. Do NOT just call another tool',
-      '  or output an empty response. The user needs to understand what happened.',
-      "- Think of it like talking to a colleague: 'I checked the file and here is what I found...'",
-      '- Only call another tool if the current task genuinely requires more information.',
-      '  If you have enough to answer, STOP calling tools and write your synthesis.',
-      '- Never end a turn with just tool calls. Always wrap up with plain text.',
+      'Tool results arrive as [Tool result: <name>] messages. Use them to continue the task and call more tools only if needed. When the task is done, reply in plain text with what you found or did.',
       '',
       'Available tools:',
       ...tools.filter((t) => t.function?.name).map((t) => `- ${compactSignature(t)}`),
