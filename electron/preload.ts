@@ -65,6 +65,13 @@ const api = {
     recordUsage: (id: string) => ipcRenderer.invoke('accounts:recordUsage', id),
     markExhausted: (id: string) => ipcRenderer.invoke('accounts:markExhausted', id),
   },
+  convos: {
+    list: () => ipcRenderer.invoke('convos:list'),
+    load: (id: string) => ipcRenderer.invoke('convos:load', id),
+    save: (convo: any) => ipcRenderer.invoke('convos:save', convo),
+    delete: (id: string) => ipcRenderer.invoke('convos:delete', id),
+    rename: (id: string, title: string) => ipcRenderer.invoke('convos:rename', id, title),
+  },
   opencode: {
     probe: () => ipcRenderer.invoke('opencode:probe'),
     status: () => ipcRenderer.invoke('opencode:status'),

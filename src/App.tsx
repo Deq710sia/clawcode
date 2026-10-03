@@ -23,7 +23,6 @@ export default function App() {
     (async () => {
       const c = await window.claw.config.get();
       if (cancelled) return;
-      // Apply defaults
       const defaulted = {
         ...c,
         endpoint: c.endpoint || 'https://api.openai.com/v1',
@@ -32,15 +31,13 @@ export default function App() {
       };
       setConfig(defaulted);
       if (c.workspace) {
-        // Tell the main process first; setWorkspace triggers a file-tree refresh that
-        // needs the main process to already know the workspace.
         const r = await window.claw.workspace.set(c.workspace);
         if (!cancelled && r.ok) setWorkspace(c.workspace);
       }
-      // First-run welcome if no API key and no endpoint customization
-      if (!cancelled && !c.hasApiKey && !c.endpoint) {
-        useClaw.getState().setShowWelcome(true);
-      }
+      // Load conversation history
+      useClaw.getState().refreshConversationList();
+      // Load accounts
+      useClaw.getState().refreshAccounts();
     })();
     return () => { cancelled = true; };
   }, []);

@@ -93,6 +93,18 @@ export interface AccountProfile {
   windowDurationMs: number;
 }
 
+export interface SavedConversation {
+  id: string;
+  title: string;
+  messages: any[];
+  plan: any[];
+  createdAt: number;
+  updatedAt: number;
+  model?: string;
+  endpoint?: string;
+  workspace?: string;
+}
+
 export interface OpenCodeStatus {
   installed: boolean;
   version?: string;
@@ -266,6 +278,13 @@ declare global {
         login: (accountId: string) => Promise<{ ok: boolean; loggedIn: boolean; error?: string }>;
         recordUsage: (id: string) => Promise<any>;
         markExhausted: (id: string) => Promise<{ ok: boolean }>;
+      };
+      convos: {
+        list: () => Promise<SavedConversation[]>;
+        load: (id: string) => Promise<SavedConversation | null>;
+        save: (convo: any) => Promise<{ ok: boolean; error?: string }>;
+        delete: (id: string) => Promise<{ ok: boolean; error?: string }>;
+        rename: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
       };
       opencode: {
         probe: () => Promise<OpenCodeStatus>;

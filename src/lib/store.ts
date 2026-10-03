@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatMessage, ToolCall, FileEntry, PublicConfig, InstalledSkill, AccountProfile } from '../types';
+import type { ChatMessage, ToolCall, FileEntry, PublicConfig, InstalledSkill, AccountProfile, SavedConversation } from '../types';
 import { streamChat, type ChatStreamEvent, type ApiMessage } from './api';
 
 interface PendingDiff {
@@ -42,6 +42,16 @@ interface ClawState {
   refreshAccounts: () => Promise<void>;
   activeAccountId: string | null;
   setActiveAccount: (id: string | null) => void;
+
+  // Conversation persistence
+  conversationId: string | null;
+  conversationTitle: string;
+  conversationList: SavedConversation[];
+  refreshConversationList: () => Promise<void>;
+  loadConversation: (id: string) => Promise<void>;
+  startNewConversation: () => void;
+  deleteConversation: (id: string) => Promise<void>;
+  saveCurrentConversation: () => Promise<void>;
 
   showSettings: boolean;
   setShowSettings: (v: boolean) => void;
@@ -290,6 +300,8 @@ export const useClaw = create<ClawState>((set, get) => ({
       if (!hadToolCalls) {
         // No more tool calls — assistant finished its turn.
         set({ isStreaming: false });
+        // Auto-save the conversation
+        await get().saveCurrentConversation();
         return;
       }
 
@@ -394,6 +406,8 @@ export const useClaw = create<ClawState>((set, get) => ({
         : [...messages, { id: uuid(), role: 'assistant' as const, content: notice, createdAt: Date.now() }];
       return { isStreaming: false, messages: finalMessages };
     });
+    // Auto-save the conversation
+    await get().saveCurrentConversation();
   },
 
   stopStreaming: () => {
@@ -427,6 +441,65 @@ export const useClaw = create<ClawState>((set, get) => ({
     set({ accounts: list });
   },
   setActiveAccount: (id) => set({ activeAccountId: id }),
+
+  // Conversation persistence
+  conversationId: null,
+  conversationTitle: '',
+  conversationList: [],
+  refreshConversationList: async () => {
+    const list = await window.claw.convos.list();
+    set({ conversationList: list });
+  },
+  loadConversation: async (id) => {
+    const convo = await window.claw.convos.load(id);
+    if (!convo) return;
+    set({
+      conversationId: convo.id,
+      conversationTitle: convo.title,
+      messages: convo.messages,
+      plan: convo.plan,
+      isStreaming: false,
+      pendingToolCalls: {},
+      pendingDiffs: [],
+    });
+  },
+  startNewConversation: () => {
+    set({
+      conversationId: null,
+      conversationTitle: '',
+      messages: [],
+      plan: [],
+      isStreaming: false,
+      pendingToolCalls: {},
+      pendingDiffs: [],
+    });
+  },
+  deleteConversation: async (id) => {
+    await window.claw.convos.delete(id);
+    await get().refreshConversationList();
+    if (get().conversationId === id) get().startNewConversation();
+  },
+  saveCurrentConversation: async () => {
+    const state = get();
+    if (state.messages.length === 0) return;
+    const id = state.conversationId || uuid();
+    const title = state.conversationTitle || state.messages.find((m) => m.role === 'user')?.content.slice(0, 60) || 'New conversation';
+    const cfg = state.config;
+    const convo: SavedConversation = {
+      id,
+      title,
+      messages: state.messages,
+      plan: state.plan,
+      createdAt: state.messages[0]?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+      model: cfg?.model,
+      endpoint: cfg?.endpoint,
+      workspace: state.workspace,
+    };
+    await window.claw.convos.save(convo);
+    set({ conversationId: id, conversationTitle: title });
+    await get().refreshConversationList();
+  },
 
   switchModel: async (endpoint, model, accountId) => {
     const cfg = get().config;

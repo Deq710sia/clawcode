@@ -21,6 +21,7 @@ const { autoUpdater } = pkg;
 import * as Sandbox from './sandbox.js';
 import * as ProcessSandbox from './process-sandbox.js';
 import * as Accounts from './accounts/index.js';
+import * as Convos from './conversations.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -96,13 +97,36 @@ function createWindow() {
     }
   });
 
-  // Open external links in browser
+  // Open external links in browser — intercept ALL navigation to prevent
+  // the app from navigating away from index.html (which "stuck" the app).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       shell.openExternal(url);
       return { action: 'deny' };
     }
     return { action: 'allow' };
+  });
+
+  // Block in-page navigation (clicking a link <a href="https://..."> inside chat
+  // was navigating the Electron window to that URL, "sticking" the app).
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    // Only allow file:// navigation (loading the app itself)
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        shell.openExternal(url);
+      }
+    }
+  });
+
+  // Also intercept link clicks at the DOM level via will-attach-webhook
+  mainWindow.webContents.on('will-redirect', (e, url) => {
+    if (!url.startsWith('file://')) {
+      e.preventDefault();
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        shell.openExternal(url);
+      }
+    }
   });
 }
 
@@ -112,6 +136,7 @@ app.whenReady().then(async () => {
   Skills.initSkills();
   HF.initModels();
   Accounts.initAccounts();
+  Convos.initConversations();
   const bridgeStatus = await startBridgeServer();
   if (!bridgeStatus.ok) {
     console.error('[clawcode] WebChat bridge server failed to start:', bridgeStatus.error);
@@ -495,6 +520,13 @@ function registerIpc() {
   });
   ipcMain.handle('accounts:recordUsage', (_e, id: string) => Accounts.recordUsage(id));
   ipcMain.handle('accounts:markExhausted', (_e, id: string) => { Accounts.markExhausted(id); return { ok: true }; });
+
+  // ----- Conversation persistence -----
+  ipcMain.handle('convos:list', () => Convos.listConversations());
+  ipcMain.handle('convos:load', (_e, id: string) => Convos.loadConversation(id));
+  ipcMain.handle('convos:save', (_e, convo: any) => Convos.saveConversation(convo));
+  ipcMain.handle('convos:delete', (_e, id: string) => Convos.deleteConversation(id));
+  ipcMain.handle('convos:rename', (_e, id: string, title: string) => Convos.renameConversation(id, title));
 
   // ----- OpenCode -----
   ipcMain.handle('opencode:probe', () => probeOpenCode());

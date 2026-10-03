@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { RefreshCw, FolderOpen, File, Folder, ChevronRight, Package, Cpu, Files } from 'lucide-react';
+import { RefreshCw, FolderOpen, File, Folder, ChevronRight, Package, Cpu, Files, MessageSquare } from 'lucide-react';
 import { useClaw } from '../lib/store';
 import type { FileEntry } from '../types';
 import SkillsBrowser from './SkillsBrowser';
 import ModelsBrowser from './ModelsBrowser';
+import ConversationHistory from './ConversationHistory';
 
-type Tab = 'explorer' | 'skills' | 'models';
+type Tab = 'history' | 'explorer' | 'skills' | 'models';
 
 interface TreeNode {
   name: string;
@@ -135,6 +136,7 @@ export default function Sidebar() {
   };
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
+    { id: 'history', label: 'History', icon: MessageSquare },
     { id: 'explorer', label: 'Files', icon: Files },
     { id: 'skills', label: 'Skills', icon: Package },
     { id: 'models', label: 'Models', icon: Cpu },
@@ -156,6 +158,7 @@ export default function Sidebar() {
         ))}
       </div>
 
+      {tab === 'history' && <ConversationHistory />}
       {tab === 'explorer' && (
         <>
           <div className="sidebar-header">

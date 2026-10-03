@@ -1,6 +1,6 @@
 {
   "name": "clawcode",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "ClawCode — universal agentic harness (Electron + OpenCode + WebChat Bridge)",
   "author": "ClawCode",
   "license": "MIT",
