@@ -20,6 +20,7 @@ import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import * as Sandbox from './sandbox.js';
 import * as ProcessSandbox from './process-sandbox.js';
+import * as Accounts from './accounts/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -110,6 +111,7 @@ app.whenReady().then(async () => {
   initBridge();
   Skills.initSkills();
   HF.initModels();
+  Accounts.initAccounts();
   const bridgeStatus = await startBridgeServer();
   if (!bridgeStatus.ok) {
     console.error('[clawcode] WebChat bridge server failed to start:', bridgeStatus.error);
@@ -477,6 +479,22 @@ function registerIpc() {
   ipcMain.handle('webchat:login', async (_e, id: WebChatId) => webchatLogin(id));
   ipcMain.handle('webchat:reset', async (_e, id: WebChatId) => { await resetWebChat(id); return { ok: true }; });
   ipcMain.handle('webchat:bridgeUrl', () => `http://127.0.0.1:${BRIDGE_PORT}/v1`);
+
+  // ----- Multi-account manager -----
+  ipcMain.handle('accounts:list', () => Accounts.getAccounts());
+  ipcMain.handle('accounts:add', (_e, service: any, label: string) => Accounts.addAccount(service, label));
+  ipcMain.handle('accounts:remove', (_e, id: string) => Accounts.removeAccount(id));
+  ipcMain.handle('accounts:usage', (_e, id: string) => Accounts.getUsageInfo(id));
+  ipcMain.handle('accounts:login', async (_e, accountId: string) => {
+    const acct = Accounts.getAccount(accountId);
+    if (!acct) return { ok: false, error: 'Account not found' };
+    const dir = Accounts.getAccountProfileDir(accountId);
+    const result = await webchatLogin(acct.service, accountId, dir);
+    if (result.loggedIn) Accounts.setAccountLoggedIn(accountId, true);
+    return result;
+  });
+  ipcMain.handle('accounts:recordUsage', (_e, id: string) => Accounts.recordUsage(id));
+  ipcMain.handle('accounts:markExhausted', (_e, id: string) => { Accounts.markExhausted(id); return { ok: true }; });
 
   // ----- OpenCode -----
   ipcMain.handle('opencode:probe', () => probeOpenCode());

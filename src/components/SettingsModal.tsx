@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { X, Eye, EyeOff, Save, Trash2, Globe, Cpu, Bot, Cloud, Server, RefreshCw, Shield } from 'lucide-react';
+import { X, Eye, EyeOff, Save, Trash2, Globe, Cpu, Bot, Cloud, Server, RefreshCw, Shield, Users, Plus, LogIn } from 'lucide-react';
 import { useClaw } from '../lib/store';
 import { defaultSystemPrompt } from '../lib/api';
-import type { ProviderPreset, WebChatProfile, OpenCodeStatus } from '../types';
+import type { ProviderPreset, WebChatProfile, OpenCodeStatus, AccountProfile } from '../types';
 import UpdatePanel from './UpdatePanel';
 import SandboxPanel from './SandboxPanel';
 
-type Tab = 'provider' | 'webchats' | 'opencode' | 'sandbox' | 'updates' | 'advanced';
+type Tab = 'provider' | 'accounts' | 'webchats' | 'opencode' | 'sandbox' | 'updates' | 'advanced';
 
 export default function SettingsModal() {
   const setShowSettings = useClaw((s) => s.setShowSettings);
@@ -119,6 +119,7 @@ export default function SettingsModal() {
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'provider', label: 'Provider', icon: Cloud },
+    { id: 'accounts', label: 'Accounts', icon: Users },
     { id: 'webchats', label: 'Web Chats', icon: Globe },
     { id: 'opencode', label: 'OpenCode', icon: Bot },
     { id: 'sandbox', label: 'Sandbox', icon: Shield },
@@ -231,6 +232,8 @@ export default function SettingsModal() {
               </div>
             </>
           )}
+
+          {tab === 'accounts' && <AccountsTab />}
 
           {tab === 'webchats' && (
             <>
@@ -356,5 +359,108 @@ export default function SettingsModal() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Accounts management tab — add/remove/login multiple accounts per web chat service. */
+function AccountsTab() {
+  const [accounts, setAccounts] = useState<AccountProfile[]>([]);
+  const [newService, setNewService] = useState('claude');
+  const [newLabel, setNewLabel] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const refresh = async () => setAccounts(await window.claw.accounts.list());
+  useEffect(() => { refresh(); }, []);
+
+  const addAccount = async () => {
+    await window.claw.accounts.add(newService, newLabel || '');
+    setNewLabel('');
+    await refresh();
+  };
+
+  const loginAccount = async (id: string) => {
+    setBusy(id);
+    const res = await window.claw.accounts.login(id);
+    if (!res.loggedIn) alert(`Login failed: ${res.error}`);
+    await refresh();
+    setBusy(null);
+  };
+
+  const removeAccount = async (id: string) => {
+    if (!confirm('Remove this account and its browser profile?')) return;
+    await window.claw.accounts.remove(id);
+    await refresh();
+  };
+
+  return (
+    <>
+      <div className="form-hint" style={{ marginBottom: 16 }}>
+        Add multiple accounts per service (e.g. 3 Google accounts for Gemini). When one account hits a rate limit,
+        ClawCode automatically hands off to the next available account — your conversation continues without losing context.
+        Switch accounts mid-chat using the dropdown in the chat header.
+      </div>
+
+      <div className="account-add-row">
+        <select value={newService} onChange={(e) => setNewService(e.target.value)}>
+          <option value="claude">Claude.ai</option>
+          <option value="chatgpt">ChatGPT</option>
+          <option value="gemini">Gemini</option>
+          <option value="grok">Grok</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+        <input
+          type="text"
+          placeholder="Label (e.g. Work Gmail)"
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addAccount()}
+        />
+        <button className="btn primary" onClick={addAccount}>
+          <Plus size={12} /> Add
+        </button>
+      </div>
+
+      <div className="accounts-list" style={{ marginTop: 12 }}>
+        {accounts.length === 0 && (
+          <div className="browser-empty">No accounts added yet. Add one above to get started.</div>
+        )}
+        {accounts.map((a) => {
+          const usage = a.messageCount / a.estimatedLimit * 100;
+          return (
+            <div key={a.id} className="account-row">
+              <div className="account-row-info">
+                <div className="account-row-label">
+                  {a.label}
+                  {a.loggedIn ? (
+                    <span className="status-ok tiny">✓ logged in</span>
+                  ) : (
+                    <span className="status-pending tiny">not logged in</span>
+                  )}
+                  <span className={`account-status-dot ${a.status}`} />
+                </div>
+                <div className="account-row-meta">
+                  {a.service} · {a.messageCount}/{a.estimatedLimit} msgs ({Math.round(usage)}%)
+                </div>
+                <div className="account-usage-bar">
+                  <div className={`account-usage-fill ${a.status}`} style={{ width: `${Math.min(100, usage)}%` }} />
+                </div>
+              </div>
+              <div className="account-row-actions">
+                <button
+                  className="btn primary"
+                  onClick={() => loginAccount(a.id)}
+                  disabled={busy === a.id}
+                >
+                  <LogIn size={11} /> {busy === a.id ? 'Launching…' : a.loggedIn ? 'Re-login' : 'Log in'}
+                </button>
+                <button className="btn ghost" onClick={() => removeAccount(a.id)}>
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

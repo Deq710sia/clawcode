@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatMessage, ToolCall, FileEntry, PublicConfig, InstalledSkill } from '../types';
+import type { ChatMessage, ToolCall, FileEntry, PublicConfig, InstalledSkill, AccountProfile } from '../types';
 import { streamChat, type ChatStreamEvent, type ApiMessage } from './api';
 
 interface PendingDiff {
@@ -18,6 +18,7 @@ interface ClawState {
 
   config: PublicConfig | null;
   setConfig: (c: PublicConfig | null) => void;
+  switchModel: (endpoint: string, model: string, accountId?: string) => Promise<void>;
 
   files: FileEntry[];
   setFiles: (f: FileEntry[]) => void;
@@ -36,6 +37,11 @@ interface ClawState {
 
   installedSkills: InstalledSkill[];
   refreshInstalledSkills: () => Promise<void>;
+
+  accounts: AccountProfile[];
+  refreshAccounts: () => Promise<void>;
+  activeAccountId: string | null;
+  setActiveAccount: (id: string | null) => void;
 
   showSettings: boolean;
   setShowSettings: (v: boolean) => void;
@@ -205,6 +211,39 @@ export const useClaw = create<ClawState>((set, get) => ({
             ),
           }));
         } else if (ev.type === 'error') {
+          // Check if this is a rate-limit / quota error that warrants a failover
+          const errMsg = (ev.message || '').toLowerCase();
+          const isRateLimit = /rate.?limit|429|quota|too many requests|message limit|usage limit|exhausted/i.test(errMsg);
+          const isWebChat = cfg.endpoint.includes('127.0.0.1:7777') || cfg.endpoint.includes('localhost:7777');
+
+          if (isRateLimit && isWebChat && get().activeAccountId) {
+            // Mark the current account as exhausted
+            await window.claw.accounts.markExhausted(get().activeAccountId!);
+            // Try to find a fallback: another account on the same service, or a different service
+            const accounts = await window.claw.accounts.list();
+            const currentAcct = accounts.find((a) => a.id === get().activeAccountId);
+            if (currentAcct) {
+              // Find next available account for the same service
+              const nextAcct = accounts.find((a) =>
+                a.service === currentAcct.service && a.loggedIn && a.status === 'available' && a.id !== currentAcct.id
+              );
+              if (nextAcct) {
+                // Switch to the next account — same model/endpoint, different account
+                set((s) => ({
+                  messages: s.messages.map((m) =>
+                    m.id === assistantMsg.id
+                      ? { ...m, streaming: false, content: (m.content || '') + `\n\n[handoff: rate limit hit on ${currentAcct.label}, switching to ${nextAcct.label}]` }
+                      : m
+                  ),
+                }));
+                await get().switchModel(cfg.endpoint, cfg.model, nextAcct.id);
+                await window.claw.accounts.recordUsage(nextAcct.id);
+                // Retry the same round with the new account
+                return; // the loop will continue with the new config
+              }
+            }
+          }
+          // Not a rate-limit error, or no fallback available — show the error
           set((s) => ({
             messages: s.messages.map((m) =>
               m.id === assistantMsg.id
@@ -379,6 +418,39 @@ export const useClaw = create<ClawState>((set, get) => ({
   refreshInstalledSkills: async () => {
     const list = await window.claw.skills.installed();
     set({ installedSkills: list });
+  },
+
+  accounts: [],
+  activeAccountId: null,
+  refreshAccounts: async () => {
+    const list = await window.claw.accounts.list();
+    set({ accounts: list });
+  },
+  setActiveAccount: (id) => set({ activeAccountId: id }),
+
+  switchModel: async (endpoint, model, accountId) => {
+    const cfg = get().config;
+    if (!cfg) return;
+    // Update the config with the new endpoint/model
+    await window.claw.config.set({ endpoint, model });
+    const updated = await window.claw.config.get();
+    set({
+      config: {
+        ...updated,
+        endpoint: updated.endpoint || 'https://api.openai.com/v1',
+        model: updated.model || 'gpt-4o-mini',
+        systemPrompt: updated.systemPrompt || cfg.systemPrompt,
+      },
+      activeAccountId: accountId ?? null,
+    });
+    // Insert a system note about the switch (visible to user, not to model)
+    const note: ChatMessage = {
+      id: uuid(),
+      role: 'assistant',
+      content: `_Switched to ${model}${accountId ? ` (account: ${accountId})` : ''} — conversation context preserved._`,
+      createdAt: Date.now(),
+    };
+    set((s) => ({ messages: [...s.messages, note] }));
   },
 
   showSettings: false,

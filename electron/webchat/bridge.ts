@@ -54,16 +54,15 @@ interface ActiveSession {
   busy: boolean;
 }
 
-const sessions: Partial<Record<WebChatId, ActiveSession>> = {};
+const sessions = new Map<string, ActiveSession>();
 
 /** Set CLAWCODE_WEBCHAT_HEADFUL=1 to keep a visible browser window (more reliable against bot checks). */
 const FORCE_HEADFUL = process.env.CLAWCODE_WEBCHAT_HEADFUL === '1';
 
-async function launchSession(id: WebChatId, headless: boolean): Promise<ActiveSession> {
+async function launchSession(id: WebChatId, headless: boolean, profileDirOverride?: string): Promise<ActiveSession> {
   await ensurePlaywright();
-  const profile = getProfile(id);
   const driver = DRIVERS[id]();
-  const userDataDir = getProfileDir(id);
+  const userDataDir = profileDirOverride || getProfileDir(id);
 
   let context: any;
   try {
@@ -112,53 +111,53 @@ async function launchSession(id: WebChatId, headless: boolean): Promise<ActiveSe
   return { driver, context, page, busy: false };
 }
 
-export async function closeSession(id: WebChatId) {
-  const s = sessions[id];
+export async function closeSession(key: string) {
+  const s = sessions.get(key);
   if (!s) return;
   try { await s.context.close(); } catch {}
-  delete sessions[id];
+  sessions.delete(key);
 }
 
 export async function closeAllSessions() {
-  await Promise.all(Object.keys(sessions).map((id) => closeSession(id as WebChatId)));
+  await Promise.all(Array.from(sessions.keys()).map((key) => closeSession(key)));
 }
 
 /** Launch a visible browser window so the user can log in to the web chat. */
-export async function login(id: WebChatId): Promise<{ ok: boolean; loggedIn: boolean; error?: string }> {
+export async function login(id: WebChatId, accountId?: string, profileDirOverride?: string): Promise<{ ok: boolean; loggedIn: boolean; error?: string }> {
+  const key = accountId || id;
   try {
-    await closeSession(id);
-    const session = await launchSession(id, false); // headful
-    sessions[id] = session;
+    await closeSession(key);
+    const session = await launchSession(id, false, profileDirOverride);
+    sessions.set(key, session);
 
-    // Poll for login success for up to 5 minutes (user needs time to log in)
     const start = Date.now();
     while (Date.now() - start < 5 * 60 * 1000) {
       if (session.page.isClosed()) {
-        await closeSession(id);
+        await closeSession(key);
         return { ok: false, loggedIn: false, error: 'Login window was closed before login completed' };
       }
       const loggedIn = await session.driver.isLoggedIn(session.page).catch(() => false);
       if (loggedIn) {
         setLoggedIn(id, true);
-        // Cookies are persisted in the profile dir. Reopen headless for actual queries.
-        await goHeadless(id).catch(() => {});
+        await goHeadless(id, key, profileDirOverride).catch(() => {});
         return { ok: true, loggedIn: true };
       }
       await new Promise((r) => setTimeout(r, 2000));
     }
-    await closeSession(id);
+    await closeSession(key);
     return { ok: false, loggedIn: false, error: 'Login timed out (5 min)' };
   } catch (err: any) {
-    await closeSession(id);
+    await closeSession(key);
     return { ok: false, loggedIn: false, error: err?.message ?? String(err) };
   }
 }
 
 /** Switch the active session to headless mode (close headful, reopen headless). */
-export async function goHeadless(id: WebChatId): Promise<void> {
-  await closeSession(id);
-  const session = await launchSession(id, true);
-  sessions[id] = session;
+export async function goHeadless(id: WebChatId, key?: string, profileDirOverride?: string): Promise<void> {
+  const sessionKey = key || id;
+  await closeSession(sessionKey);
+  const session = await launchSession(id, true, profileDirOverride);
+  sessions.set(sessionKey, session);
 }
 
 export interface QueryOpts {
@@ -170,25 +169,25 @@ export interface QueryOpts {
 }
 
 /** Send a message to the web chat and stream the response. Resolves when the reply is complete. */
-export async function query(id: WebChatId, opts: QueryOpts): Promise<void> {
+export async function query(id: WebChatId, opts: QueryOpts, accountId?: string, profileDirOverride?: string): Promise<void> {
+  const key = accountId || id;
   let session: ActiveSession | undefined;
   let settled = false;
   const fail = (err: Error) => { if (!settled) { settled = true; opts.onError(err); } };
   const finish = (full: string) => { if (!settled) { settled = true; opts.onDone(full); } };
 
   try {
-    if (!getProfile(id).loggedIn) {
-      // Never logged in: open the visible login window and wait.
+    if (!getProfile(id).loggedIn && !accountId) {
       const result = await login(id);
       if (!result.loggedIn) {
         return fail(new Error(`Not logged in to ${id}: ${result.error ?? 'login required'}`));
       }
     }
 
-    session = sessions[id];
+    session = sessions.get(key);
     if (!session) {
-      session = await launchSession(id, true);
-      sessions[id] = session;
+      session = await launchSession(id, true, profileDirOverride);
+      sessions.set(key, session);
     }
     if (session.busy) return fail(new Error(`${id} session is busy with another query`));
     session.busy = true;
@@ -225,8 +224,8 @@ export async function query(id: WebChatId, opts: QueryOpts): Promise<void> {
 export function getBridgeStatus() {
   return getAllProfiles().map((p) => ({
     ...p,
-    active: !!sessions[p.id as WebChatId],
-    busy: sessions[p.id as WebChatId]?.busy ?? false,
+    active: sessions.has(p.id as WebChatId),
+    busy: sessions.get(p.id as WebChatId)?.busy ?? false,
   }));
 }
 

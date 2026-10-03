@@ -2615,3 +2615,198 @@ textarea {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* =========================================================================
+   Account switcher (chat header dropdown)
+   ========================================================================= */
+.account-switcher {
+  position: relative;
+  margin-left: 8px;
+}
+
+.account-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  color: var(--fg-1);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  transition: all 0.12s;
+}
+
+.account-switcher-btn:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border-color: var(--border-3);
+}
+
+.account-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.account-status-dot.available { background: var(--ok); }
+.account-status-dot.cooling { background: var(--warn); }
+.account-status-dot.exhausted { background: var(--err); }
+
+.account-switcher-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 240px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-3);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.account-switcher-header {
+  padding: 6px 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+  border-bottom: 1px solid var(--border-1);
+  font-weight: 600;
+}
+
+.account-switcher-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  width: 100%;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.account-switcher-item:hover:not(:disabled) { background: var(--bg-3); }
+.account-switcher-item.active { background: var(--accent-faint); }
+.account-switcher-item:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.account-switcher-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-switcher-item-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg-0);
+  font-weight: 500;
+}
+
+.account-switcher-item-meta {
+  font-size: 10px;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+.account-switcher-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  font-size: 11px;
+  color: var(--fg-2);
+  line-height: 1.4;
+}
+
+/* =========================================================================
+   Accounts management tab (Settings)
+   ========================================================================= */
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  gap: 8px;
+}
+
+.account-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.account-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-0);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-row-meta {
+  font-size: 11px;
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+}
+
+.account-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.account-usage-bar {
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.account-usage-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+.account-usage-fill.available { background: var(--ok); }
+.account-usage-fill.cooling { background: var(--warn); }
+.account-usage-fill.exhausted { background: var(--err); }
+
+.account-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-3);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+}
+
+.account-add-row select, .account-add-row input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+}
+
+.account-add-row select {
+  max-width: 120px;
+}

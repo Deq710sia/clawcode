@@ -56,6 +56,15 @@ const api = {
     reset: (id: string) => ipcRenderer.invoke('webchat:reset', id),
     bridgeUrl: () => ipcRenderer.invoke('webchat:bridgeUrl'),
   },
+  accounts: {
+    list: () => ipcRenderer.invoke('accounts:list'),
+    add: (service: string, label: string) => ipcRenderer.invoke('accounts:add', service, label),
+    remove: (id: string) => ipcRenderer.invoke('accounts:remove', id),
+    usage: (id: string) => ipcRenderer.invoke('accounts:usage', id),
+    login: (accountId: string) => ipcRenderer.invoke('accounts:login', accountId),
+    recordUsage: (id: string) => ipcRenderer.invoke('accounts:recordUsage', id),
+    markExhausted: (id: string) => ipcRenderer.invoke('accounts:markExhausted', id),
+  },
   opencode: {
     probe: () => ipcRenderer.invoke('opencode:probe'),
     status: () => ipcRenderer.invoke('opencode:status'),

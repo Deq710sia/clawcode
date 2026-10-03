@@ -4,6 +4,7 @@ import { useClaw } from '../lib/store';
 import Message from './Message';
 import MessageInput from './MessageInput';
 import PlanPanel from './PlanPanel';
+import AccountSwitcher from './AccountSwitcher';
 
 const SUGGESTIONS = [
   { icon: FileSearch, title: 'Explore this codebase', sub: 'Walk me through the project structure' },
@@ -65,6 +66,7 @@ export default function ChatPanel() {
           ) : (
             <span>no workspace</span>
           )}
+          <AccountSwitcher />
         </div>
       </div>
 

@@ -80,6 +80,19 @@ export interface WebChatProfile {
   busy?: boolean;
 }
 
+export interface AccountProfile {
+  id: string;
+  service: string;
+  label: string;
+  loggedIn: boolean;
+  lastUsed: number;
+  messageCount: number;
+  windowStart: number;
+  status: 'available' | 'cooling' | 'exhausted';
+  estimatedLimit: number;
+  windowDurationMs: number;
+}
+
 export interface OpenCodeStatus {
   installed: boolean;
   version?: string;
@@ -244,6 +257,15 @@ declare global {
         login: (id: string) => Promise<{ ok: boolean; loggedIn: boolean; error?: string }>;
         reset: (id: string) => Promise<{ ok: boolean }>;
         bridgeUrl: () => Promise<string>;
+      };
+      accounts: {
+        list: () => Promise<AccountProfile[]>;
+        add: (service: string, label: string) => Promise<AccountProfile>;
+        remove: (id: string) => Promise<{ ok: boolean; error?: string }>;
+        usage: (id: string) => Promise<{ used: number; limit: number; percent: number; status: string; windowMs: number; windowStart: number } | null>;
+        login: (accountId: string) => Promise<{ ok: boolean; loggedIn: boolean; error?: string }>;
+        recordUsage: (id: string) => Promise<any>;
+        markExhausted: (id: string) => Promise<{ ok: boolean }>;
       };
       opencode: {
         probe: () => Promise<OpenCodeStatus>;
